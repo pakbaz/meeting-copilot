@@ -21,23 +21,6 @@
                     <h5 class="mb-0">⚙️ Controls</h5>
                 </div>
                 <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label">Recognition Mode</label>
-                        <select class="form-select" @bind="RecognitionMode" disabled="@IsRecognizing">
-                            <option value="microphone">Microphone (Real-time)</option>
-                            <option value="file">Audio File</option>
-                        </select>
-                    </div>
-
-                    @if (RecognitionMode == "file")
-                    {
-                        <div class="mb-3">
-                            <label for="audioFile" class="form-label">Select Audio File</label>
-                            <input type="file" class="form-control" id="audioFile" accept=".wav,.mp3,.ogg"
-                                   disabled="@IsRecognizing" />
-                            <small class="text-muted">Supported: WAV, MP3, OGG</small>
-                        </div>
-                    }
 
                     <div class="d-grid gap-2">
                         @if (!IsRecognizing)
@@ -169,7 +152,6 @@
 @code {
     private List<TranscriptionResult> TranscriptionResults = new();
     private HashSet<string> UniqueSpeakers = new();
-    private string RecognitionMode = "microphone";
     private bool IsRecognizing = false;
     private string ErrorMessage = string.Empty;
     private CancellationTokenSource? RecognitionCancellationToken;
@@ -232,6 +214,25 @@
         {
             ErrorMessage = error;
             IsRecognizing = false;
+            
+            // Check for common issues and provide user-friendly messages
+            if (error.Contains("Authentication") || error.Contains("401"))
+            {
+                ErrorMessage = "⚠️ Authentication Error: Please ensure you have proper permissions on the Speech resource. Role assignment may take a few minutes to propagate.";
+            }
+            else if (error.Contains("microphone") || error.Contains("audio"))
+            {
+                ErrorMessage = "🎤 Microphone Error: Please ensure microphone access is granted and your browser supports microphone access over HTTPS.";
+            }
+            else if (error.Contains("network") || error.Contains("connection"))
+            {
+                ErrorMessage = "🌐 Network Error: Please check your internet connection and Speech service availability.";
+            }
+            else
+            {
+                ErrorMessage = $"❌ Error: {error}";
+            }
+            
             StateHasChanged();
         });
     }
@@ -250,25 +251,31 @@
         {
             ErrorMessage = string.Empty;
             IsRecognizing = true;
+            StateHasChanged();
+            
             RecognitionCancellationToken = new CancellationTokenSource();
 
-            if (RecognitionMode == "microphone")
+            // Start recognition in background - don't await
+            _ = Task.Run(async () =>
             {
-                await SpeechService.RecognizeFromMicrophoneAsync(RecognitionCancellationToken.Token);
-            }
-            else
-            {
-                // For file mode, you would implement file upload handling
-                ErrorMessage = "File upload mode requires additional UI implementation. Using microphone instead.";
-                await SpeechService.RecognizeFromMicrophoneAsync(RecognitionCancellationToken.Token);
-            }
+                try
+                {
+                    await SpeechService.RecognizeFromMicrophoneAsync(RecognitionCancellationToken.Token);
+                }
+                catch (Exception ex)
+                {
+                    await InvokeAsync(() =>
+                    {
+                        ErrorMessage = $"Recognition error: {ex.Message}";
+                        IsRecognizing = false;
+                        StateHasChanged();
+                    });
+                }
+            });
         }
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to start recognition: {ex.Message}";
-        }
-        finally
-        {
             IsRecognizing = false;
         }
     }

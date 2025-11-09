@@ -2,17 +2,20 @@ using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using Microsoft.CognitiveServices.Speech.Transcription;
 using System.Collections.Concurrent;
+using Azure.Identity;
+using Azure.Core;
 
 namespace meeting_copilot.Services;
 
 /// <summary>
 /// Service for handling real-time speech-to-text with diarization.
-/// Uses Azure Cognitive Services Speech SDK for speaker identification.
+/// Uses Azure Cognitive Services Speech SDK with Managed Identity authentication.
+/// Follows Azure best practices by using DefaultAzureCredential instead of API keys.
 /// </summary>
 public class SpeechRecognitionService : IDisposable
 {
     private readonly string _endpoint;
-    private readonly string _subscriptionKey;
+    private readonly TokenCredential _credential;
     private ConversationTranscriber? _conversationTranscriber;
     private readonly ConcurrentBag<TranscriptionResult> _results = new();
     private TaskCompletionSource<bool>? _recognitionComplete;
@@ -24,17 +27,23 @@ public class SpeechRecognitionService : IDisposable
     public SpeechRecognitionService(IConfiguration configuration)
     {
         _endpoint = configuration["AzureSpeech:Endpoint"] ?? "https://gpt-realtime-sp.cognitiveservices.azure.com/";
-        _subscriptionKey = configuration["AzureSpeech:SubscriptionKey"] ?? string.Empty;
+        
+        // Use DefaultAzureCredential for automatic authentication:
+        // - In production: Uses Managed Identity
+        // - In development: Uses Azure CLI, Visual Studio, or VS Code credentials
+        _credential = new DefaultAzureCredential();
     }
 
     /// <summary>
     /// Recognizes speech from microphone input with real-time diarization.
+    /// Uses Azure Managed Identity for secure authentication.
     /// </summary>
     public async Task RecognizeFromMicrophoneAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _subscriptionKey);
+            // Use TokenCredential for authentication instead of subscription key
+            var speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _credential);
             speechConfig.SpeechRecognitionLanguage = "en-US";
             speechConfig.SetProperty(PropertyId.SpeechServiceResponse_DiarizeIntermediateResults, "true");
 
@@ -49,56 +58,30 @@ public class SpeechRecognitionService : IDisposable
             _conversationTranscriber.Canceled += ConversationTranscriber_Canceled;
             _conversationTranscriber.SessionStopped += ConversationTranscriber_SessionStopped;
 
-            // Start transcription
-            await _conversationTranscriber.StartTranscribingAsync();
+            // Handle cancellation
+            cancellationToken.Register(async () =>
+            {
+                try
+                {
+                    await StopRecognitionAsync();
+                }
+                catch (Exception ex)
+                {
+                    OnError?.Invoke(this, $"Error during cancellation: {ex.Message}");
+                }
+            });
 
-            // Wait for completion or cancellation
-            await _recognitionComplete.Task.ConfigureAwait(false);
+            // Start transcription - this will continue running in background
+            await _conversationTranscriber.StartTranscribingAsync();
         }
         catch (Exception ex)
         {
             OnError?.Invoke(this, $"Error during recognition: {ex.Message}");
+            throw;
         }
     }
 
-    /// <summary>
-    /// Recognizes speech from a WAV file with real-time diarization.
-    /// </summary>
-    public async Task RecognizeFromFileAsync(string filePath, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (!File.Exists(filePath))
-            {
-                throw new FileNotFoundException($"Audio file not found: {filePath}");
-            }
 
-            var speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _subscriptionKey);
-            speechConfig.SpeechRecognitionLanguage = "en-US";
-            speechConfig.SetProperty(PropertyId.SpeechServiceResponse_DiarizeIntermediateResults, "true");
-
-            var audioConfig = AudioConfig.FromWavFileInput(filePath);
-            _conversationTranscriber = new ConversationTranscriber(speechConfig, audioConfig);
-
-            _recognitionComplete = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            // Subscribe to transcription events
-            _conversationTranscriber.Transcribing += ConversationTranscriber_Transcribing;
-            _conversationTranscriber.Transcribed += ConversationTranscriber_Transcribed;
-            _conversationTranscriber.Canceled += ConversationTranscriber_Canceled;
-            _conversationTranscriber.SessionStopped += ConversationTranscriber_SessionStopped;
-
-            // Start transcription
-            await _conversationTranscriber.StartTranscribingAsync();
-
-            // Wait for completion or cancellation
-            await _recognitionComplete.Task.ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            OnError?.Invoke(this, $"Error during file recognition: {ex.Message}");
-        }
-    }
 
     /// <summary>
     /// Stops the current transcription session.
@@ -170,6 +153,16 @@ public class SpeechRecognitionService : IDisposable
         if (e.Reason == CancellationReason.Error)
         {
             errorMessage += $"\nError Code: {e.ErrorCode}\nDetails: {e.ErrorDetails}";
+            
+            // Provide more specific error guidance
+            if (e.ErrorCode == CancellationErrorCode.ConnectionFailure)
+            {
+                errorMessage += "\nCheck your internet connection and Speech service configuration.";
+            }
+            else if (e.ErrorCode == CancellationErrorCode.AuthenticationFailure)
+            {
+                errorMessage += "\nAuthentication failed. Please ensure you have the proper role assignment on the Speech resource.";
+            }
         }
 
         OnError?.Invoke(this, errorMessage);
