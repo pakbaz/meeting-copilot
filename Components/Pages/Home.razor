@@ -1,0 +1,336 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using meeting_copilot.Services
+@inject SpeechRecognitionService SpeechService
+@implements IAsyncDisposable
+
+<PageTitle>Meeting Copilot - Real-Time Diarization</PageTitle>
+
+<div class="container mt-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-4">🎤 Meeting Copilot</h1>
+            <p class="lead text-muted">Real-time speech-to-text with speaker identification</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-6">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">⚙️ Controls</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Recognition Mode</label>
+                        <select class="form-select" @bind="RecognitionMode" disabled="@IsRecognizing">
+                            <option value="microphone">Microphone (Real-time)</option>
+                            <option value="file">Audio File</option>
+                        </select>
+                    </div>
+
+                    @if (RecognitionMode == "file")
+                    {
+                        <div class="mb-3">
+                            <label for="audioFile" class="form-label">Select Audio File</label>
+                            <input type="file" class="form-control" id="audioFile" accept=".wav,.mp3,.ogg"
+                                   disabled="@IsRecognizing" />
+                            <small class="text-muted">Supported: WAV, MP3, OGG</small>
+                        </div>
+                    }
+
+                    <div class="d-grid gap-2">
+                        @if (!IsRecognizing)
+                        {
+                            <button class="btn btn-success btn-lg" @onclick="StartRecognition">
+                                <span class="oi oi-media-play"></span> Start Recognition
+                            </button>
+                            <button class="btn btn-secondary" @onclick="ClearResults" disabled="@(TranscriptionResults.Count == 0)">
+                                Clear Results
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-danger btn-lg" @onclick="StopRecognition">
+                                <span class="oi oi-media-stop"></span> Stop Recognition
+                            </button>
+                        }
+                    </div>
+
+                    @if (IsRecognizing)
+                    {
+                        <div class="mt-3 alert alert-info">
+                            <div class="spinner-border spinner-border-sm me-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <span>Listening for speech...</span>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(ErrorMessage))
+                    {
+                        <div class="mt-3 alert alert-danger alert-dismissible fade show" role="alert">
+                            @ErrorMessage
+                            <button type="button" class="btn-close" @onclick="@(() => ErrorMessage = string.Empty)"></button>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-3">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">📊 Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6">
+                            <h6 class="text-muted">Total Utterances</h6>
+                            <h3 class="text-primary">@FinalResults.Count()</h3>
+                        </div>
+                        <div class="col-6">
+                            <h6 class="text-muted">Unique Speakers</h6>
+                            <h3 class="text-success">@UniqueSpeakers.Count</h3>
+                        </div>
+                    </div>
+                    @if (UniqueSpeakers.Count > 0)
+                    {
+                        <div class="mt-3">
+                            <h6 class="text-muted">Speakers Identified:</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                @foreach (var speaker in SortSpeakers())
+                                {
+                                    <span class="badge bg-secondary">@speaker</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card shadow-sm">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">📝 Transcription Results</h5>
+                </div>
+                <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                    @if (TranscriptionResults.Count == 0)
+                    {
+                        <p class="text-muted text-center py-4">
+                            Click "Start Recognition" to begin transcribing speech with speaker identification.
+                        </p>
+                    }
+                    else
+                    {
+                        @foreach (var result in TranscriptionResults)
+                        {
+                            <div class="mb-3 p-2 border-start border-3 @GetSpeakerBorderColor(result.SpeakerId)"
+                                 style="background-color: @GetSpeakerBackgroundColor(result.SpeakerId)">
+                                <div class="d-flex justify-content-between align-items-start mb-1">
+                                    <span class="badge @GetSpeakerBadgeClass(result.SpeakerId)">
+                                        @result.SpeakerId
+                                    </span>
+                                    <small class="text-muted">
+                                        @result.Timestamp.ToString("HH:mm:ss.fff")
+                                    </small>
+                                </div>
+                                <p class="mb-0 @(result.IsFinal ? "fw-bold" : "fst-italic text-muted")">
+                                    @result.Text
+                                </p>
+                                @if (!result.IsFinal)
+                                {
+                                    <small class="text-muted">
+                                        <em>(intermediate result)</em>
+                                    </small>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .border-start {
+        border-width: 4px !important;
+    }
+
+    .card {
+        transition: box-shadow 0.3s ease-in-out;
+    }
+
+    .card:hover {
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+    }
+</style>
+
+@code {
+    private List<TranscriptionResult> TranscriptionResults = new();
+    private HashSet<string> UniqueSpeakers = new();
+    private string RecognitionMode = "microphone";
+    private bool IsRecognizing = false;
+    private string ErrorMessage = string.Empty;
+    private CancellationTokenSource? RecognitionCancellationToken;
+
+    private IEnumerable<TranscriptionResult> FinalResults =>
+        TranscriptionResults.Where(r => r.IsFinal).ToList();
+
+    protected override void OnInitialized()
+    {
+        // Subscribe to speech service events
+        SpeechService.OnTranscribing += OnTranscribingHandler;
+        SpeechService.OnTranscribed += OnTranscribedHandler;
+        SpeechService.OnError += OnErrorHandler;
+    }
+
+    private List<string> SortSpeakers()
+    {
+        return UniqueSpeakers.OrderBy(s => s).ToList();
+    }
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        // File handling would be implemented here for actual file upload support
+    }
+
+    private void OnTranscribingHandler(object? sender, TranscriptionResult result)
+    {
+        InvokeAsync(() =>
+        {
+            // Remove previous intermediate result from same speaker if exists
+            var lastIntermediate = TranscriptionResults.LastOrDefault(r => !r.IsFinal && r.SpeakerId == result.SpeakerId);
+            if (lastIntermediate != null)
+            {
+                TranscriptionResults.Remove(lastIntermediate);
+            }
+
+            TranscriptionResults.Add(result);
+            TrackSpeaker(result.SpeakerId);
+            StateHasChanged();
+        });
+    }
+
+    private void OnTranscribedHandler(object? sender, TranscriptionResult result)
+    {
+        InvokeAsync(() =>
+        {
+            // Remove intermediate results for this speaker
+            TranscriptionResults.RemoveAll(r => !r.IsFinal && r.SpeakerId == result.SpeakerId);
+
+            // Add the final result
+            TranscriptionResults.Add(result);
+            TrackSpeaker(result.SpeakerId);
+            StateHasChanged();
+        });
+    }
+
+    private void OnErrorHandler(object? sender, string error)
+    {
+        InvokeAsync(() =>
+        {
+            ErrorMessage = error;
+            IsRecognizing = false;
+            StateHasChanged();
+        });
+    }
+
+    private void TrackSpeaker(string speakerId)
+    {
+        if (!string.IsNullOrEmpty(speakerId) && speakerId != "Unknown")
+        {
+            UniqueSpeakers.Add(speakerId);
+        }
+    }
+
+    private async Task StartRecognition()
+    {
+        try
+        {
+            ErrorMessage = string.Empty;
+            IsRecognizing = true;
+            RecognitionCancellationToken = new CancellationTokenSource();
+
+            if (RecognitionMode == "microphone")
+            {
+                await SpeechService.RecognizeFromMicrophoneAsync(RecognitionCancellationToken.Token);
+            }
+            else
+            {
+                // For file mode, you would implement file upload handling
+                ErrorMessage = "File upload mode requires additional UI implementation. Using microphone instead.";
+                await SpeechService.RecognizeFromMicrophoneAsync(RecognitionCancellationToken.Token);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to start recognition: {ex.Message}";
+        }
+        finally
+        {
+            IsRecognizing = false;
+        }
+    }
+
+    private async Task StopRecognition()
+    {
+        try
+        {
+            IsRecognizing = false;
+            RecognitionCancellationToken?.Cancel();
+            await SpeechService.StopRecognitionAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Error stopping recognition: {ex.Message}";
+        }
+    }
+
+    private void ClearResults()
+    {
+        TranscriptionResults.Clear();
+        UniqueSpeakers.Clear();
+        ErrorMessage = string.Empty;
+        SpeechService.ClearResults();
+    }
+
+    private string GetSpeakerBadgeClass(string speakerId) => speakerId switch
+    {
+        "Guest-1" => "bg-primary",
+        "Guest-2" => "bg-info",
+        "Guest-3" => "bg-success",
+        "Guest-4" => "bg-warning",
+        "Guest-5" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private string GetSpeakerBorderColor(string speakerId) => speakerId switch
+    {
+        "Guest-1" => "border-primary",
+        "Guest-2" => "border-info",
+        "Guest-3" => "border-success",
+        "Guest-4" => "border-warning",
+        "Guest-5" => "border-danger",
+        _ => "border-secondary"
+    };
+
+    private string GetSpeakerBackgroundColor(string speakerId) => speakerId switch
+    {
+        "Guest-1" => "rgba(13, 110, 253, 0.1)",      // Primary
+        "Guest-2" => "rgba(23, 162, 184, 0.1)",      // Info
+        "Guest-3" => "rgba(25, 135, 84, 0.1)",       // Success
+        "Guest-4" => "rgba(255, 193, 7, 0.1)",       // Warning
+        "Guest-5" => "rgba(220, 53, 69, 0.1)",       // Danger
+        _ => "rgba(108, 117, 125, 0.1)"              // Secondary
+    };
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        SpeechService.OnTranscribing -= OnTranscribingHandler;
+        SpeechService.OnTranscribed -= OnTranscribedHandler;
+        SpeechService.OnError -= OnErrorHandler;
+        RecognitionCancellationToken?.Dispose();
+        await Task.CompletedTask;
+    }
+}
