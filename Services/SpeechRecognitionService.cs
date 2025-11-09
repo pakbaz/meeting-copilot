@@ -16,6 +16,7 @@ public class SpeechRecognitionService : IDisposable
 {
     private readonly string _endpoint;
     private readonly TokenCredential _credential;
+    private readonly string? _subscriptionKey;
     private ConversationTranscriber? _conversationTranscriber;
     private readonly ConcurrentBag<TranscriptionResult> _results = new();
     private TaskCompletionSource<bool>? _recognitionComplete;
@@ -26,24 +27,52 @@ public class SpeechRecognitionService : IDisposable
 
     public SpeechRecognitionService(IConfiguration configuration)
     {
-        _endpoint = configuration["AzureSpeech:Endpoint"] ?? "https://gpt-realtime-sp.cognitiveservices.azure.com/";
+        _endpoint = configuration["AzureSpeech:Endpoint"] ?? "https://realtime-mssp-resource.cognitiveservices.azure.com/";
+        
+        // Try multiple secure sources for subscription key (following Azure best practices):
+        // 1. User Secrets (for development) - most secure for local dev
+        // 2. Environment Variables (for CI/CD scenarios)
+        // 3. Azure Key Vault (automatically handled by configuration provider)
+        _subscriptionKey = configuration["AzureSpeech:SubscriptionKey"] ?? 
+                          configuration["AZURE_SPEECH_KEY"] ?? 
+                          Environment.GetEnvironmentVariable("AZURE_SPEECH_KEY");
         
         // Use DefaultAzureCredential for automatic authentication:
-        // - In production: Uses Managed Identity
+        // - In production: Uses Managed Identity (recommended)
         // - In development: Uses Azure CLI, Visual Studio, or VS Code credentials
         _credential = new DefaultAzureCredential();
     }
 
     /// <summary>
     /// Recognizes speech from microphone input with real-time diarization.
-    /// Uses Azure Managed Identity for secure authentication.
+    /// Tries Managed Identity first, falls back to subscription key if authentication fails.
     /// </summary>
     public async Task RecognizeFromMicrophoneAsync(CancellationToken cancellationToken)
     {
+        SpeechConfig? speechConfig = null;
+        
         try
         {
-            // Use TokenCredential for authentication instead of subscription key
-            var speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _credential);
+            // First, try using TokenCredential (Managed Identity/Azure CLI)
+            try
+            {
+                speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _credential);
+                OnError?.Invoke(this, "ℹ️ Using Managed Identity authentication...");
+            }
+            catch (Exception authEx)
+            {
+                // If managed identity fails and we have a subscription key, use it as fallback
+                if (!string.IsNullOrEmpty(_subscriptionKey))
+                {
+                    speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _subscriptionKey);
+                    OnError?.Invoke(this, "ℹ️ Managed Identity failed, using subscription key as fallback...");
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Managed Identity authentication failed and no subscription key provided: {authEx.Message}");
+                }
+            }
+
             speechConfig.SpeechRecognitionLanguage = "en-US";
             speechConfig.SetProperty(PropertyId.SpeechServiceResponse_DiarizeIntermediateResults, "true");
 
@@ -73,10 +102,11 @@ public class SpeechRecognitionService : IDisposable
 
             // Start transcription - this will continue running in background
             await _conversationTranscriber.StartTranscribingAsync();
+            OnError?.Invoke(this, "✅ Speech recognition started successfully!");
         }
         catch (Exception ex)
         {
-            OnError?.Invoke(this, $"Error during recognition: {ex.Message}");
+            OnError?.Invoke(this, $"Error during recognition setup: {ex.Message}");
             throw;
         }
     }
