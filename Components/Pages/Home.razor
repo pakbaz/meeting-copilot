@@ -1,7 +1,10 @@
 ﻿@page "/"
 @rendermode InteractiveServer
 @using meeting_copilot.Services
+@using System.Globalization
+@using System.Text.Json
 @inject SpeechRecognitionService SpeechService
+@inject IJSRuntime JSRuntime
 @implements IAsyncDisposable
 
 <PageTitle>Meeting Copilot - Real-Time Diarization</PageTitle>
@@ -21,12 +24,32 @@
                     <h5 class="mb-0">⚙️ Controls</h5>
                 </div>
                 <div class="card-body">
+                    <!-- Microphone Permission Status -->
+                    @if (!string.IsNullOrEmpty(MicrophoneStatus))
+                    {
+                        <div class="alert @(HasMicrophonePermission ? "alert-success" : "alert-warning") alert-dismissible fade show mb-3" role="alert">
+                            <div class="d-flex align-items-center">
+                                <span class="me-2">@(HasMicrophonePermission ? "✅" : "⚠️")</span>
+                                <span>@MicrophoneStatus</span>
+                            </div>
+                            @if (!HasMicrophonePermission)
+                            {
+                                <button type="button" class="btn btn-sm btn-outline-primary mt-2" @onclick="RequestMicrophonePermission">
+                                    <span class="oi oi-microphone"></span> Request Microphone Access
+                                </button>
+                            }
+                            <button type="button" class="btn-close" @onclick="@(() => MicrophoneStatus = string.Empty)"></button>
+                        </div>
+                    }
 
                     <div class="d-grid gap-2">
                         @if (!IsRecognizing)
                         {
-                            <button class="btn btn-success btn-lg" @onclick="StartRecognition">
+                            <button class="btn btn-success btn-lg" @onclick="StartRecognition" disabled="@(!HasMicrophonePermission && !string.IsNullOrEmpty(MicrophoneStatus))">
                                 <span class="oi oi-media-play"></span> Start Recognition
+                            </button>
+                            <button class="btn btn-outline-secondary" @onclick="CheckMicrophonePermission">
+                                <span class="oi oi-shield"></span> Check Microphone
                             </button>
                             <button class="btn btn-secondary" @onclick="ClearResults" disabled="@(TranscriptionResults.Count == 0)">
                                 Clear Results
@@ -82,7 +105,7 @@
                             <div class="d-flex flex-wrap gap-2">
                                 @foreach (var speaker in SortSpeakers())
                                 {
-                                    <span class="badge bg-secondary">@speaker</span>
+                                    <span class="badge bg-secondary" title="@speaker">@GetDisplayName(speaker)</span>
                                 }
                             </div>
                         </div>
@@ -111,7 +134,7 @@
                                  style="background-color: @GetSpeakerBackgroundColor(result.SpeakerId)">
                                 <div class="d-flex justify-content-between align-items-start mb-1">
                                     <span class="badge @GetSpeakerBadgeClass(result.SpeakerId)">
-                                        @result.SpeakerId
+                                        @GetDisplayName(result.SpeakerId)
                                     </span>
                                     <small class="text-muted">
                                         @result.Timestamp.ToString("HH:mm:ss.fff")
@@ -129,6 +152,30 @@
                             </div>
                         }
                     }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0">🗒️ Notes & Commands</h5>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(CommandFeedback))
+                    {
+                        <div class="alert alert-info alert-dismissible fade show" role="alert">
+                            @CommandFeedback
+                            <button type="button" class="btn-close" @onclick="@(() => CommandFeedback = string.Empty)"></button>
+                        </div>
+                    }
+                    <textarea class="form-control" rows="4" placeholder="Type notes or commands (e.g., /speaker John Smith)" @bind="CommandInput" @bind:event="oninput"></textarea>
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <small class="text-muted">Slash commands: <code>/speaker [name]</code> renames the most recent speaker.</small>
+                        <button class="btn btn-primary" @onclick="HandleCommandSubmit" disabled="@string.IsNullOrWhiteSpace(CommandInput)">Submit</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -154,10 +201,25 @@
     private HashSet<string> UniqueSpeakers = new();
     private bool IsRecognizing = false;
     private string ErrorMessage = string.Empty;
+    private string MicrophoneStatus = string.Empty;
+    private bool HasMicrophonePermission = false;
     private CancellationTokenSource? RecognitionCancellationToken;
+    private readonly Dictionary<string, string> SpeakerAliases = new();
+    private string LastSpeakerId = string.Empty;
+    private string CommandInput = string.Empty;
+    private string CommandFeedback = string.Empty;
 
     private IEnumerable<TranscriptionResult> FinalResults =>
         TranscriptionResults.Where(r => r.IsFinal).ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Check microphone permissions on page load
+            await CheckMicrophonePermission();
+        }
+    }
 
     protected override void OnInitialized()
     {
@@ -169,7 +231,9 @@
 
     private List<string> SortSpeakers()
     {
-        return UniqueSpeakers.OrderBy(s => s).ToList();
+        return UniqueSpeakers
+            .OrderBy(s => GetDisplayName(s), StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private void HandleFileSelected(InputFileChangeEventArgs e)
@@ -212,19 +276,38 @@
     {
         InvokeAsync(() =>
         {
-            ErrorMessage = error;
+            var normalized = error.ToLowerInvariant();
+            var isSevere = error.Contains("❌") || error.Contains("💥") ||
+                           normalized.Contains("error") || normalized.Contains("fail") ||
+                           normalized.Contains("denied") || normalized.Contains("exception") ||
+                           normalized.Contains("canceled");
+
+            if (!isSevere)
+            {
+                // Treat this as a status update rather than an error
+                if (normalized.Contains("microphone"))
+                {
+                    MicrophoneStatus = error;
+                }
+
+                // Clear any previous error banner for non-severe messages
+                ErrorMessage = string.Empty;
+                StateHasChanged();
+                return;
+            }
+
             IsRecognizing = false;
-            
+
             // Check for common issues and provide user-friendly messages
-            if (error.Contains("Authentication") || error.Contains("401"))
+            if (normalized.Contains("authentication") || normalized.Contains("401"))
             {
                 ErrorMessage = "⚠️ Authentication Error: Please ensure you have proper permissions on the Speech resource. Role assignment may take a few minutes to propagate.";
             }
-            else if (error.Contains("microphone") || error.Contains("audio"))
+            else if (normalized.Contains("microphone") || normalized.Contains("audio"))
             {
                 ErrorMessage = "🎤 Microphone Error: Please ensure microphone access is granted and your browser supports microphone access over HTTPS.";
             }
-            else if (error.Contains("network") || error.Contains("connection"))
+            else if (normalized.Contains("network") || normalized.Contains("connection"))
             {
                 ErrorMessage = "🌐 Network Error: Please check your internet connection and Speech service availability.";
             }
@@ -232,23 +315,136 @@
             {
                 ErrorMessage = $"❌ Error: {error}";
             }
-            
+
             StateHasChanged();
         });
     }
 
     private void TrackSpeaker(string speakerId)
     {
-        if (!string.IsNullOrEmpty(speakerId) && speakerId != "Unknown")
+        if (string.IsNullOrEmpty(speakerId))
+        {
+            return;
+        }
+
+        LastSpeakerId = speakerId;
+
+        if (speakerId != "Unknown")
         {
             UniqueSpeakers.Add(speakerId);
         }
+
+        if (!SpeakerAliases.ContainsKey(speakerId))
+        {
+            SpeakerAliases[speakerId] = FormatSpeakerId(speakerId);
+        }
+    }
+
+    private async Task CheckMicrophonePermission()
+    {
+        try
+        {
+            await EnsureMicrophoneScriptReadyAsync();
+
+            var result = await JSRuntime.InvokeAsync<JsonElement>("MicrophonePermissions.checkMicrophonePermission");
+            
+            if (result.TryGetProperty("hasPermission", out var hasPermProp) && hasPermProp.GetBoolean())
+            {
+                HasMicrophonePermission = true;
+                MicrophoneStatus = "Microphone access granted! You can start speech recognition.";
+            }
+            else
+            {
+                HasMicrophonePermission = false;
+                string error = "Microphone access check failed.";
+                if (result.TryGetProperty("error", out var errorProp))
+                {
+                    error = errorProp.GetString() ?? error;
+                }
+                MicrophoneStatus = error;
+            }
+        }
+        catch (Exception ex)
+        {
+            HasMicrophonePermission = false;
+            MicrophoneStatus = $"Manual permission required. Please click the microphone icon in your browser's address bar and select 'Allow'.";
+            Console.WriteLine($"Microphone check error: {ex.Message}");
+        }
+        
+        StateHasChanged();
+    }
+    
+    private async Task RequestMicrophonePermission()
+    {
+        try
+        {
+            await EnsureMicrophoneScriptReadyAsync();
+
+            var result = await JSRuntime.InvokeAsync<JsonElement>("MicrophonePermissions.requestMicrophonePermission");
+            
+            if (result.TryGetProperty("granted", out var grantedProp) && grantedProp.GetBoolean())
+            {
+                HasMicrophonePermission = true;
+                MicrophoneStatus = "Microphone access granted! You can now start speech recognition.";
+            }
+            else
+            {
+                HasMicrophonePermission = false;
+                string error = "Failed to get microphone permission.";
+                if (result.TryGetProperty("error", out var errorProp))
+                {
+                    error = errorProp.GetString() ?? error;
+                }
+                MicrophoneStatus = error;
+                
+                // Add manual instructions
+                try
+                {
+                    var instructions = await JSRuntime.InvokeAsync<string>("MicrophonePermissions.getMicrophoneInstructions");
+                    if (!string.IsNullOrEmpty(instructions))
+                    {
+                        MicrophoneStatus += $"\n\n{instructions}";
+                    }
+                }
+                catch
+                {
+                    MicrophoneStatus += "\n\nPlease manually grant microphone access:\n" +
+                                      "• Click the microphone icon in your address bar\n" +
+                                      "• Select 'Allow' when prompted\n" +
+                                      "• Ensure you're using HTTPS";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            HasMicrophonePermission = false;
+            MicrophoneStatus = "Please grant microphone access manually:\n" +
+                             "• Click the microphone/lock icon in your browser's address bar\n" +
+                             "• Select 'Allow' for microphone access\n" +
+                             "• Ensure you're using HTTPS (secure connection)\n" +
+                             "• Refresh the page and try again";
+            Console.WriteLine($"Microphone request error: {ex.Message}");
+        }
+        
+        StateHasChanged();
     }
 
     private async Task StartRecognition()
     {
         try
         {
+            // Check microphone permissions before starting
+            if (!HasMicrophonePermission)
+            {
+                await CheckMicrophonePermission();
+                if (!HasMicrophonePermission)
+                {
+                    ErrorMessage = "🎤 Microphone access required. Please grant microphone permissions and try again.";
+                    return;
+                }
+            }
+            
+            CommandFeedback = string.Empty;
             ErrorMessage = string.Empty;
             IsRecognizing = true;
             StateHasChanged();
@@ -266,11 +462,19 @@
                 {
                     await InvokeAsync(() =>
                     {
+                        // Check if it's a microphone-related error
+                        if (ex.Message.Contains("microphone") || ex.Message.Contains("audio") || ex.Message.Contains("permission"))
+                        {
+                            HasMicrophonePermission = false;
+                            MicrophoneStatus = "Microphone access lost or denied. Please check your browser settings.";
+                        }
+                        
                         ErrorMessage = $"Recognition error: {ex.Message}";
                         IsRecognizing = false;
                         StateHasChanged();
                     });
                 }
+
             });
         }
         catch (Exception ex)
@@ -300,6 +504,7 @@
         UniqueSpeakers.Clear();
         ErrorMessage = string.Empty;
         SpeechService.ClearResults();
+        LastSpeakerId = string.Empty;
     }
 
     private string GetSpeakerBadgeClass(string speakerId) => speakerId switch
@@ -331,6 +536,107 @@
         "Guest-5" => "rgba(220, 53, 69, 0.1)",       // Danger
         _ => "rgba(108, 117, 125, 0.1)"              // Secondary
     };
+
+    private async Task HandleCommandSubmit()
+    {
+        var input = CommandInput?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrEmpty(input))
+        {
+            CommandFeedback = "Please enter a command (try /speaker).";
+            StateHasChanged();
+            return;
+        }
+
+        if (input.StartsWith("/speaker", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleSpeakerCommandAsync(input);
+        }
+        else
+        {
+            CommandFeedback = "⚙️ Unknown command. Currently supported: /speaker [name]";
+        }
+
+        CommandInput = string.Empty;
+        StateHasChanged();
+    }
+
+    private Task HandleSpeakerCommandAsync(string input)
+    {
+        if (string.IsNullOrEmpty(LastSpeakerId))
+        {
+            CommandFeedback = "⚠️ No speaker detected yet. Say something first, then use /speaker.";
+            return Task.CompletedTask;
+        }
+
+        var previousName = GetDisplayName(LastSpeakerId);
+        var arguments = input.Length > 8 ? input.Substring(8).Trim() : string.Empty;
+
+        string alias = string.IsNullOrEmpty(arguments)
+            ? "You"
+            : NormalizeDisplayName(arguments);
+
+        SpeakerAliases[LastSpeakerId] = alias;
+        CommandFeedback = $"✅ Speaker '{previousName}' is now identified as \"{alias}\".";
+        return Task.CompletedTask;
+    }
+
+    private string GetDisplayName(string speakerId)
+    {
+        if (string.IsNullOrWhiteSpace(speakerId))
+        {
+            return "Unknown";
+        }
+
+        if (SpeakerAliases.TryGetValue(speakerId, out var alias) && !string.IsNullOrWhiteSpace(alias))
+        {
+            return alias;
+        }
+
+        return FormatSpeakerId(speakerId);
+    }
+
+    private string NormalizeDisplayName(string value)
+    {
+        var trimmed = value.Trim();
+        var lower = trimmed.ToLower(CultureInfo.CurrentCulture);
+        return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(lower);
+    }
+
+    private string FormatSpeakerId(string speakerId)
+    {
+        if (speakerId.StartsWith("Guest-", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Guest {speakerId.Substring(6)}";
+        }
+
+        return NormalizeDisplayName(speakerId.Replace('-', ' '));
+    }
+
+    private async Task EnsureMicrophoneScriptReadyAsync()
+    {
+        const int maxAttempts = 10;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                var isReady = await JSRuntime.InvokeAsync<bool>("eval", "typeof window.MicrophonePermissions !== 'undefined'");
+                if (isReady)
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Microphone script check failed on attempt {attempt + 1}: {ex.Message}");
+            }
+
+            await Task.Delay(150);
+        }
+
+        throw new InvalidOperationException("Microphone permissions script is not available. Please ensure static assets are loading correctly.");
+    }
 
     async ValueTask IAsyncDisposable.DisposeAsync()
     {
