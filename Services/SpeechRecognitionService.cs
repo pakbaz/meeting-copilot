@@ -1,286 +1,190 @@
+using Azure.Identity;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 using Microsoft.CognitiveServices.Speech.Transcription;
 using System.Collections.Concurrent;
-using Azure.Identity;
-using Azure.Core;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace meeting_copilot.Services;
 
 /// <summary>
-/// Service for handling real-time speech-to-text with diarization.
-/// Uses Azure Cognitive Services Speech SDK with Managed Identity authentication.
-/// Follows Azure best practices by using DefaultAzureCredential instead of API keys.
+/// Provides conversation transcription with speaker diarization and automatic recovery.
 /// </summary>
-public class SpeechRecognitionService : IDisposable
+public sealed class SpeechRecognitionService : IDisposable
 {
-    private readonly string _endpoint;
-    private readonly TokenCredential _credential;
+    private readonly string _conversationEndpoint;
+    private readonly string _region;
+    private readonly DefaultAzureCredential _credential;
     private readonly string? _subscriptionKey;
-    private ConversationTranscriber? _conversationTranscriber;
+    private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly ConcurrentBag<TranscriptionResult> _results = new();
-    private TaskCompletionSource<bool>? _recognitionComplete;
-    private CancellationToken _activeCancellationToken;
-    private Connection? _currentConnection;
-    private Task? _credentialWarmupTask;
-    private readonly object _warmupLock = new();
-    private readonly TokenRequestContext _speechTokenContext = new(new[] { "https://cognitiveservices.azure.com/.default" });
 
-    private enum AuthMethod
-    {
-        None,
-        ManagedIdentity,
-        SubscriptionKey
-    }
-
-    private AuthMethod _currentAuthMethod = AuthMethod.None;
-    private bool _authFallbackAttempted = false;
+    private ConversationTranscriber? _transcriber;
+    private CancellationTokenSource? _activeCancellation;
+    private bool _isStopping;
 
     public event EventHandler<TranscriptionResult>? OnTranscribing;
     public event EventHandler<TranscriptionResult>? OnTranscribed;
     public event EventHandler<string>? OnError;
+    public event EventHandler<string>? OnStatus;
 
     public SpeechRecognitionService(IConfiguration configuration)
     {
-        _endpoint = configuration["AzureSpeech:Endpoint"] ??
-                Environment.GetEnvironmentVariable("ENDPOINT") ??
-                "https://realtime-mssp-resource.cognitiveservices.azure.com/";
-        
-        // Try multiple secure sources for subscription key (following Azure best practices):
-        // 1. User Secrets (for development) - most secure for local dev
-        // 2. Environment Variables (for CI/CD scenarios)
-        // 3. Azure Key Vault (automatically handled by configuration provider)
-        _subscriptionKey = configuration["AzureSpeech:SubscriptionKey"] ?? 
-                  configuration["AzureSpeech:SpeechKey"] ??
-                  Environment.GetEnvironmentVariable("SPEECH_KEY") ??
-                  configuration["AZURE_SPEECH_KEY"] ?? 
-                  Environment.GetEnvironmentVariable("AZURE_SPEECH_KEY");
-        
-        // Diagnostic logging
-        var hasUserSecrets = !string.IsNullOrEmpty(configuration["AzureSpeech:SubscriptionKey"]);
-        var hasEnvVar = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SPEECH_KEY")) ||
-                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_SPEECH_KEY"));
-        var hasConfigKey = !string.IsNullOrEmpty(_subscriptionKey);
-        
-        Console.WriteLine($"🔍 Authentication Diagnostics:");
-        Console.WriteLine($"   Endpoint: {_endpoint}");
-        Console.WriteLine($"   User Secrets available: {hasUserSecrets}");
-        Console.WriteLine($"   Environment variable available: {hasEnvVar}");
-        Console.WriteLine($"   Subscription key resolved: {hasConfigKey}");
-        Console.WriteLine($"   Key length: {(_subscriptionKey?.Length ?? 0)} characters");
-        
-        // Use DefaultAzureCredential for automatic authentication:
-        // - In production: Uses Managed Identity (recommended)
-        // - In development: Uses Azure CLI, Visual Studio, or VS Code credentials
-        _credential = new DefaultAzureCredential();
+        var endpointFromConfig = configuration["AzureSpeech:Endpoint"] ??
+            Environment.GetEnvironmentVariable("AZURE_SPEECH_ENDPOINT") ??
+            Environment.GetEnvironmentVariable("AZURESPEECH_ENDPOINT") ??
+            Environment.GetEnvironmentVariable("ENDPOINT");
 
-        // Kick off credential warm-up in the background so the first recognition is faster.
-        _ = WarmUpAsync();
+        var regionFromConfig = configuration["AzureSpeech:Region"] ??
+            Environment.GetEnvironmentVariable("AZURE_SPEECH_REGION") ??
+            Environment.GetEnvironmentVariable("AZURESPEECH_REGION");
+
+        if (!string.IsNullOrWhiteSpace(endpointFromConfig))
+        {
+            var normalizedEndpoint = NormalizeEndpoint(endpointFromConfig);
+            _conversationEndpoint = BuildConversationEndpoint(normalizedEndpoint);
+            _region = regionFromConfig ?? TryExtractRegionFromEndpoint(normalizedEndpoint) ?? "eastus2";
+        }
+        else
+        {
+            _region = regionFromConfig ?? "eastus2";
+            var defaultEndpoint = BuildDefaultEndpoint(_region);
+            _conversationEndpoint = BuildConversationEndpoint(defaultEndpoint);
+        }
+
+        _subscriptionKey = configuration["AzureSpeech:SubscriptionKey"] ??
+            configuration["AzureSpeech:SpeechKey"] ??
+            Environment.GetEnvironmentVariable("SPEECH_KEY") ??
+            configuration["AZURE_SPEECH_KEY"] ??
+            Environment.GetEnvironmentVariable("AZURE_SPEECH_KEY");
+
+        _credential = new DefaultAzureCredential();
     }
 
-    /// <summary>
-    /// Recognizes speech from microphone input with real-time diarization.
-    /// Tries Managed Identity first, falls back to subscription key if authentication fails.
-    /// </summary>
-    public async Task RecognizeFromMicrophoneAsync(CancellationToken cancellationToken, bool forceSubscriptionKey = false)
+    public async Task RecognizeFromMicrophoneAsync(CancellationToken cancellationToken)
     {
-        SpeechConfig? speechConfig = null;
-        string authMethod = "Unknown";
-        _activeCancellationToken = cancellationToken;
-        if (!forceSubscriptionKey)
-        {
-            _authFallbackAttempted = false;
-        }
-        _currentAuthMethod = AuthMethod.None;
-        
+        await _stateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Pre-flight check: Validate microphone access requirements
-            await ValidateMicrophoneAccessAsync();
+            await StopRecognitionInternalAsync().ConfigureAwait(false);
 
-            if (!forceSubscriptionKey)
-            {
-                await WarmUpAsync();
-            }
-            
-            // Step 1: Try using TokenCredential (Managed Identity/Azure CLI)
-            if (!forceSubscriptionKey)
-            {
-                try
-                {
-                    OnError?.Invoke(this, "🔐 Step 1: Attempting Managed Identity/Azure CLI authentication...");
-                    speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _credential);
-                    authMethod = "Managed Identity/Azure CLI";
-                    _currentAuthMethod = AuthMethod.ManagedIdentity;
-                    OnError?.Invoke(this, "✅ Managed Identity authentication configured successfully!");
-                }
-                catch (Exception authEx)
-                {
-                    OnError?.Invoke(this, $"❌ Managed Identity failed: {authEx.Message}");
-                    
-                    // Step 2: Fallback to subscription key
-                    if (!string.IsNullOrEmpty(_subscriptionKey))
-                    {
-                        OnError?.Invoke(this, "🔑 Attempting subscription key authentication...");
-                        try
-                        {
-                            speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _subscriptionKey);
-                            authMethod = "Subscription Key";
-                            _currentAuthMethod = AuthMethod.SubscriptionKey;
-                            OnError?.Invoke(this, "✅ Subscription key authentication configured successfully!");
-                        }
-                        catch (Exception keyEx)
-                        {
-                            OnError?.Invoke(this, $"❌ Subscription key failed: {keyEx.Message}");
-                            throw new InvalidOperationException($"Both authentication methods failed. Managed Identity: {authEx.Message}. Subscription Key: {keyEx.Message}");
-                        }
-                    }
-                    else
-                    {
-                        OnError?.Invoke(this, "❌ No subscription key available for fallback!");
-                        throw new InvalidOperationException($"Managed Identity authentication failed and no subscription key provided: {authEx.Message}");
-                    }
-                }
-            }
-            else
-            {
-                if (string.IsNullOrEmpty(_subscriptionKey))
-                {
-                    throw new InvalidOperationException("Subscription key not available for fallback authentication.");
-                }
+            _activeCancellation?.Dispose();
+            _activeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _isStopping = false;
 
-                OnError?.Invoke(this, "🔑 Retrying with subscription key authentication...");
-                speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint), _subscriptionKey);
-                authMethod = "Subscription Key";
-                _currentAuthMethod = AuthMethod.SubscriptionKey;
-                OnError?.Invoke(this, "✅ Subscription key authentication configured successfully!");
-            }
-
-            OnError?.Invoke(this, $"🔧 Configuring Speech SDK with {authMethod}...");
-            speechConfig.SpeechRecognitionLanguage = "en-US";
-            speechConfig.SetProperty(PropertyId.SpeechServiceResponse_DiarizeIntermediateResults, "true");
-            
-            // Tune silence timeouts to reduce initial delay while still avoiding premature cutoff
-            speechConfig.SetProperty(PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "2000");
-            speechConfig.SetProperty(PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "2000");
-
-            OnError?.Invoke(this, "🎤 Setting up microphone input...");
-            
-            try
-            {
-                var audioConfig = AudioConfig.FromDefaultMicrophoneInput();
-                _conversationTranscriber = new ConversationTranscriber(speechConfig, audioConfig);
-
-                try
-                {
-                    _currentConnection?.Dispose();
-                    _currentConnection = Connection.FromRecognizer(_conversationTranscriber);
-                    _currentConnection.Open(true); // Pre-open the websocket to shave off connection latency.
-                }
-                catch (Exception connectionEx)
-                {
-                    Console.WriteLine($"Connection warm-up failed: {connectionEx.Message}");
-                }
-            }
-            catch (Exception audioEx)
-            {
-                string microphoneError = GetMicrophoneErrorMessage(audioEx);
-                OnError?.Invoke(this, microphoneError);
-                throw new InvalidOperationException(microphoneError, audioEx);
-            }
-
-            _recognitionComplete = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            // Subscribe to transcription events
-            OnError?.Invoke(this, "📡 Subscribing to transcription events...");
-            _conversationTranscriber.Transcribing += ConversationTranscriber_Transcribing;
-            _conversationTranscriber.Transcribed += ConversationTranscriber_Transcribed;
-            _conversationTranscriber.Canceled += ConversationTranscriber_Canceled;
-            _conversationTranscriber.SessionStopped += ConversationTranscriber_SessionStopped;
-
-            // Handle cancellation
-            cancellationToken.Register(async () =>
-            {
-                try
-                {
-                    await StopRecognitionAsync();
-                }
-                catch (Exception ex)
-                {
-                    OnError?.Invoke(this, $"Error during cancellation: {ex.Message}");
-                }
-            });
-
-            // Start transcription - this will continue running in background
-            OnError?.Invoke(this, "🚀 Starting speech recognition...");
-            
-            try
-            {
-                await _conversationTranscriber.StartTranscribingAsync();
-                OnError?.Invoke(this, $"✅ Speech recognition started successfully using {authMethod}! Please speak into your microphone.");
-            }
-            catch (Exception startEx)
-            {
-                string startError = GetMicrophoneStartErrorMessage(startEx);
-                OnError?.Invoke(this, startError);
-                throw new InvalidOperationException(startError, startEx);
-            }
+            await StartTranscriberAsync(_activeCancellation.Token).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        finally
         {
-            string errorMessage = GetDetailedErrorMessage(ex);
-            OnError?.Invoke(this, errorMessage);
-            throw new InvalidOperationException(errorMessage, ex);
+            _stateLock.Release();
         }
     }
 
-
-
-    /// <summary>
-    /// Stops the current transcription session.
-    /// </summary>
     public async Task StopRecognitionAsync()
     {
-        if (_conversationTranscriber != null)
+        await _stateLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            await _conversationTranscriber.StopTranscribingAsync();
-            _conversationTranscriber.Dispose();
-            _conversationTranscriber = null;
+            _isStopping = true;
+            _activeCancellation?.Cancel();
+            await StopRecognitionInternalAsync().ConfigureAwait(false);
+            OnStatus?.Invoke(this, "Transcription stopped.");
         }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    public IEnumerable<TranscriptionResult> GetResults() => _results.ToArray();
+
+    public void ClearResults() => _results.Clear();
+
+    public void Dispose()
+    {
+        try
+        {
+            StopRecognitionAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // best effort during shutdown
+        }
+        finally
+        {
+            _activeCancellation?.Dispose();
+            _stateLock.Dispose();
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    private async Task StartTranscriberAsync(CancellationToken token)
+    {
+        var speechConfig = CreateSpeechConfig();
+        ConfigureSpeechConfig(speechConfig);
+
+        var audioConfig = AudioConfig.FromDefaultMicrophoneInput();
+        var transcriber = new ConversationTranscriber(speechConfig, audioConfig);
+        _transcriber = transcriber;
+
+        transcriber.Transcribing += ConversationTranscriber_Transcribing;
+        transcriber.Transcribed += ConversationTranscriber_Transcribed;
+        transcriber.Canceled += ConversationTranscriber_Canceled;
+        transcriber.SessionStarted += ConversationTranscriber_SessionStarted;
+        transcriber.SessionStopped += ConversationTranscriber_SessionStopped;
+
+        token.Register(() => _ = Task.Run(StopRecognitionAsync));
+
+        await transcriber.StartTranscribingAsync().ConfigureAwait(false);
+    }
+
+    private async Task StopRecognitionInternalAsync()
+    {
+        var transcriber = _transcriber;
+        if (transcriber == null)
+        {
+            return;
+        }
+
+        _transcriber = null;
+
+        transcriber.Transcribing -= ConversationTranscriber_Transcribing;
+        transcriber.Transcribed -= ConversationTranscriber_Transcribed;
+        transcriber.Canceled -= ConversationTranscriber_Canceled;
+        transcriber.SessionStarted -= ConversationTranscriber_SessionStarted;
+        transcriber.SessionStopped -= ConversationTranscriber_SessionStopped;
 
         try
         {
-            _currentConnection?.Close();
+            await transcriber.StopTranscribingAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Connection close warning: {ex.Message}");
+            OnError?.Invoke(this, $"Stop failed: {ex.Message}");
+        }
+        finally
+        {
+            transcriber.Dispose();
         }
 
-        _currentConnection?.Dispose();
-        _currentConnection = null;
-        _recognitionComplete?.TrySetResult(true);
-        _currentAuthMethod = AuthMethod.None;
+        _activeCancellation?.Dispose();
+        _activeCancellation = null;
     }
 
-    /// <summary>
-    /// Gets all transcription results collected so far.
-    /// </summary>
-    public IEnumerable<TranscriptionResult> GetResults()
+    private void ConversationTranscriber_SessionStarted(object? sender, SessionEventArgs e)
     {
-        return _results.ToList();
-    }
-
-    /// <summary>
-    /// Clears all collected results.
-    /// </summary>
-    public void ClearResults()
-    {
-        _results.Clear();
+        OnStatus?.Invoke(this, "Transcription session started.");
     }
 
     private void ConversationTranscriber_Transcribing(object? sender, ConversationTranscriptionEventArgs e)
     {
+        if (string.IsNullOrEmpty(e.Result.Text))
+        {
+            return;
+        }
+
         var result = new TranscriptionResult
         {
             Text = e.Result.Text,
@@ -295,228 +199,171 @@ public class SpeechRecognitionService : IDisposable
 
     private void ConversationTranscriber_Transcribed(object? sender, ConversationTranscriptionEventArgs e)
     {
-        if (e.Result.Reason == ResultReason.RecognizedSpeech)
+        if (e.Result.Reason != ResultReason.RecognizedSpeech || string.IsNullOrEmpty(e.Result.Text))
         {
-            var result = new TranscriptionResult
-            {
-                Text = e.Result.Text,
-                SpeakerId = e.Result.SpeakerId,
-                IsFinal = true,
-                Timestamp = DateTime.UtcNow
-            };
+            return;
+        }
 
-            _results.Add(result);
-            OnTranscribed?.Invoke(this, result);
-        }
-        else if (e.Result.Reason == ResultReason.NoMatch)
+        var result = new TranscriptionResult
         {
-            OnError?.Invoke(this, "Speech could not be recognized.");
-        }
+            Text = e.Result.Text,
+            SpeakerId = e.Result.SpeakerId,
+            IsFinal = true,
+            Timestamp = DateTime.UtcNow
+        };
+
+        _results.Add(result);
+        OnTranscribed?.Invoke(this, result);
     }
 
     private void ConversationTranscriber_Canceled(object? sender, ConversationTranscriptionCanceledEventArgs e)
     {
-        string errorMessage = $"Recognition canceled. Reason: {e.Reason}";
-
-        if (e.Reason == CancellationReason.Error)
-        {
-            errorMessage += $"\nError Code: {e.ErrorCode}\nDetails: {e.ErrorDetails}";
-            
-            // Provide more specific error guidance
-            if (e.ErrorCode == CancellationErrorCode.ConnectionFailure)
-            {
-                errorMessage += "\nCheck your internet connection and Speech service configuration.";
-            }
-            else if (e.ErrorCode == CancellationErrorCode.AuthenticationFailure)
-            {
-                errorMessage += "\nAuthentication failed. Please ensure you have the proper role assignment on the Speech resource.";
-
-                if (_currentAuthMethod == AuthMethod.ManagedIdentity && !_authFallbackAttempted && !string.IsNullOrEmpty(_subscriptionKey))
-                {
-                    _authFallbackAttempted = true;
-                    OnError?.Invoke(this, "ℹ️ Managed Identity authentication was rejected. Retrying with subscription key credentials...");
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await RestartWithSubscriptionKeyAsync();
-                        }
-                        catch (Exception retryEx)
-                        {
-                            OnError?.Invoke(this, $"❌ Subscription key fallback failed: {retryEx.Message}");
-                        }
-                    });
-                    return;
-                }
-            }
-        }
-
-        OnError?.Invoke(this, errorMessage);
-        _recognitionComplete?.TrySetResult(true);
+        var details = CancellationDetails.FromResult(e.Result);
+        var message = $"CANCELED: Reason={details.Reason}; ErrorCode={details.ErrorCode}; Details={details.ErrorDetails}";
+        OnError?.Invoke(this, message);
     }
 
     private void ConversationTranscriber_SessionStopped(object? sender, SessionEventArgs e)
     {
-        _recognitionComplete?.TrySetResult(true);
-    }
-
-    /// <summary>
-    /// Validates microphone access requirements before starting recognition
-    /// </summary>
-    private async Task ValidateMicrophoneAccessAsync()
-    {
-        // This is a placeholder for server-side validation
-        // The actual microphone permission checking will be done on the client-side
-        await Task.CompletedTask;
-        
-        OnError?.Invoke(this, "🔍 Checking microphone access requirements...");
-        OnError?.Invoke(this, "ℹ️ Note: Microphone access requires HTTPS and browser permissions.");
-        OnError?.Invoke(this, "ℹ️ Please ensure you've granted microphone access in your browser.");
-    }
-    
-    /// <summary>
-    /// Gets a user-friendly error message for microphone-related errors
-    /// </summary>
-    private string GetMicrophoneErrorMessage(Exception ex)
-    {
-        string baseMessage = "🎤 Microphone Error: ";
-        
-        if (ex.Message.Contains("microphone") || ex.Message.Contains("audio") || ex.Message.Contains("device"))
+        if (_isStopping || _activeCancellation == null || _activeCancellation.IsCancellationRequested)
         {
-            return baseMessage + "Unable to access microphone. Please ensure:\n" +
-                   "• Microphone permissions are granted in your browser\n" +
-                   "• You're accessing the site over HTTPS\n" +
-                   "• Your microphone is not being used by another application\n" +
-                   "• Your browser supports microphone access";
-        }
-        
-        if (ex.Message.Contains("permission") || ex.Message.Contains("denied"))
-        {
-            return baseMessage + "Permission denied. Please click the microphone icon in your browser's address bar to allow access.";
-        }
-        
-        if (ex.Message.Contains("not found") || ex.Message.Contains("no device"))
-        {
-            return baseMessage + "No microphone device found. Please ensure a microphone is connected and try again.";
-        }
-        
-        return baseMessage + $"Setup failed: {ex.Message}";
-    }
-    
-    /// <summary>
-    /// Gets a user-friendly error message for speech recognition start errors
-    /// </summary>
-    private string GetMicrophoneStartErrorMessage(Exception ex)
-    {
-        string baseMessage = "🚀 Speech Recognition Error: ";
-        
-        if (ex.Message.Contains("microphone") || ex.Message.Contains("audio"))
-        {
-            return baseMessage + "Failed to start microphone capture. Please refresh the page and ensure microphone access is allowed.";
-        }
-        
-        if (ex.Message.Contains("timeout") || ex.Message.Contains("connection"))
-        {
-            return baseMessage + "Connection timeout. Please check your internet connection and try again.";
-        }
-        
-        return baseMessage + $"Failed to start: {ex.Message}";
-    }
-    
-    /// <summary>
-    /// Gets a detailed error message with troubleshooting information
-    /// </summary>
-    private string GetDetailedErrorMessage(Exception ex)
-    {
-        string baseMessage = "💥 Critical Error: ";
-        
-        // Check for common microphone-related issues
-        if (ex.Message.Contains("microphone") || ex.Message.Contains("audio") || 
-            ex.Message.Contains("device") || ex.Message.Contains("permission"))
-        {
-            return baseMessage + "Microphone access failed. Please ensure:\n" +
-                   "• You're using a supported browser (Chrome, Edge, Firefox)\n" +
-                   "• The site is accessed over HTTPS (required for microphone)\n" +
-                   "• Microphone permissions are granted\n" +
-                   "• Your microphone is working and not used by other apps";
-        }
-        
-        // Check for authentication issues
-        if (ex.Message.Contains("authentication") || ex.Message.Contains("401") || ex.Message.Contains("403"))
-        {
-            return baseMessage + "Authentication failed. Please check your Azure Speech Service configuration and permissions.";
-        }
-        
-        // Check for network issues
-        if (ex.Message.Contains("network") || ex.Message.Contains("connection") || ex.Message.Contains("timeout"))
-        {
-            return baseMessage + "Network error. Please check your internet connection and Azure Speech Service availability.";
-        }
-        
-        return baseMessage + ex.Message;
-    }
-
-    private async Task RestartWithSubscriptionKeyAsync()
-    {
-        try
-        {
-            await StopRecognitionAsync();
-        }
-        catch (Exception ex)
-        {
-            OnError?.Invoke(this, $"ℹ️ Issue encountered while stopping previous session: {ex.Message}");
-        }
-
-        if (_activeCancellationToken.IsCancellationRequested)
-        {
-            OnError?.Invoke(this, "ℹ️ Recognition was cancelled before fallback could be attempted.");
+            OnStatus?.Invoke(this, "Transcription session stopped.");
             return;
         }
 
-        await RecognizeFromMicrophoneAsync(_activeCancellationToken, forceSubscriptionKey: true);
-    }
+        OnStatus?.Invoke(this, "Transcription paused by service. Attempting to resume...");
 
-    public void Dispose()
-    {
-        _conversationTranscriber?.Dispose();
-        _currentConnection?.Dispose();
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Warm up managed identity credentials ahead of recognition to reduce the first-call latency.
-    /// </summary>
-    public Task WarmUpAsync()
-    {
-        if (!string.IsNullOrEmpty(_subscriptionKey))
+        _ = Task.Run(async () =>
         {
-            return Task.CompletedTask;
+            await _stateLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                DisposeTranscriberInstance();
+
+                if (_activeCancellation == null || _activeCancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                await StartTranscriberAsync(_activeCancellation.Token).ConfigureAwait(false);
+                OnStatus?.Invoke(this, "Transcription resumed.");
+            }
+            catch (Exception ex)
+            {
+                OnError?.Invoke(this, $"Failed to resume transcription: {ex.Message}");
+            }
+            finally
+            {
+                _stateLock.Release();
+            }
+        });
+    }
+
+    private void DisposeTranscriberInstance()
+    {
+        var transcriber = _transcriber;
+        if (transcriber == null)
+        {
+            return;
         }
 
-        lock (_warmupLock)
-        {
-            _credentialWarmupTask ??= WarmUpCredentialsInternalAsync();
-            return _credentialWarmupTask;
-        }
+        _transcriber = null;
+
+        transcriber.Transcribing -= ConversationTranscriber_Transcribing;
+        transcriber.Transcribed -= ConversationTranscriber_Transcribed;
+        transcriber.Canceled -= ConversationTranscriber_Canceled;
+        transcriber.SessionStarted -= ConversationTranscriber_SessionStarted;
+        transcriber.SessionStopped -= ConversationTranscriber_SessionStopped;
+
+        transcriber.Dispose();
     }
 
-    private async Task WarmUpCredentialsInternalAsync()
+    private SpeechConfig CreateSpeechConfig()
     {
+        if (!string.IsNullOrWhiteSpace(_subscriptionKey))
+        {
+            return SpeechConfig.FromEndpoint(new Uri(_conversationEndpoint), _subscriptionKey);
+        }
+
+        return SpeechConfig.FromEndpoint(new Uri(_conversationEndpoint), _credential);
+    }
+
+    private static void ConfigureSpeechConfig(SpeechConfig config)
+    {
+        config.SpeechRecognitionLanguage = "en-US";
+        config.EnableDictation();
+        config.SetProperty(PropertyId.SpeechServiceResponse_DiarizeIntermediateResults, "true");
+        config.SetProperty(PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "30000");
+        config.SetProperty(PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "30000");
+    }
+
+    private static string BuildDefaultEndpoint(string region) =>
+        $"https://{region}.stt.speech.microsoft.com";
+
+    private static string BuildConversationEndpoint(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return endpoint;
+        }
+
         try
         {
-            await _credential.GetTokenAsync(_speechTokenContext, CancellationToken.None);
-            Console.WriteLine("Speech credential warm-up complete.");
+            var builder = new UriBuilder(endpoint);
+            var path = builder.Path.Trim('/');
+
+            if (string.IsNullOrEmpty(path) ||
+                !path.Contains("speech/recognition/conversation", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.Path = "speech/recognition/conversation/cognitiveservices/v1";
+            }
+
+            return builder.Uri.ToString().TrimEnd('/');
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"Speech credential warm-up skipped: {ex.Message}");
+            return $"{endpoint.TrimEnd('/')}/speech/recognition/conversation/cognitiveservices/v1";
+        }
+    }
+
+    private static string NormalizeEndpoint(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return endpoint;
+        }
+
+        try
+        {
+            var builder = new UriBuilder(endpoint) { Path = string.Empty };
+            return builder.Uri.ToString().TrimEnd('/');
+        }
+        catch
+        {
+            return endpoint.TrimEnd('/');
+        }
+    }
+
+    private static string? TryExtractRegionFromEndpoint(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return null;
+        }
+
+        try
+        {
+            var uri = new Uri(endpoint);
+            var parts = uri.Host.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length > 0 ? parts[0] : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 }
 
-/// <summary>
-/// Represents a single transcription result with speaker information.
-/// </summary>
 public class TranscriptionResult
 {
     public string Text { get; set; } = string.Empty;

@@ -73,10 +73,17 @@
                         </div>
                     }
 
+                    @if (!string.IsNullOrEmpty(TranscriptionStatus))
+                    {
+                        <div class="mt-3 alert alert-secondary" role="status">
+                            @TranscriptionStatus
+                        </div>
+                    }
+
                     @if (!string.IsNullOrEmpty(ErrorMessage))
                     {
                         <div class="mt-3 alert alert-danger alert-dismissible fade show" role="alert">
-                            @ErrorMessage
+                            <div style="white-space: pre-line;">@ErrorMessage</div>
                             <button type="button" class="btn-close" @onclick="@(() => ErrorMessage = string.Empty)"></button>
                         </div>
                     }
@@ -208,6 +215,7 @@
     private string LastSpeakerId = string.Empty;
     private string CommandInput = string.Empty;
     private string CommandFeedback = string.Empty;
+    private string TranscriptionStatus = string.Empty;
 
     private IEnumerable<TranscriptionResult> FinalResults =>
         TranscriptionResults.Where(r => r.IsFinal).ToList();
@@ -227,6 +235,7 @@
         SpeechService.OnTranscribing += OnTranscribingHandler;
         SpeechService.OnTranscribed += OnTranscribedHandler;
         SpeechService.OnError += OnErrorHandler;
+        SpeechService.OnStatus += OnStatusHandler;
     }
 
     private List<string> SortSpeakers()
@@ -298,22 +307,50 @@
 
             IsRecognizing = false;
 
-            // Check for common issues and provide user-friendly messages
-            if (normalized.Contains("authentication") || normalized.Contains("401"))
+            // Check for common issues and provide user-friendly messages with line breaks
+            if (normalized.Contains("authentication") || normalized.Contains("401") || normalized.Contains("403"))
             {
-                ErrorMessage = "⚠️ Authentication Error: Please ensure you have proper permissions on the Speech resource. Role assignment may take a few minutes to propagate.";
+                ErrorMessage = error; // Use the detailed message from the service
+            }
+            else if (normalized.Contains("subscription key") || normalized.Contains("no subscription key"))
+            {
+                // Configuration issue - very specific guidance
+                ErrorMessage = error; // Use the detailed message from the service
             }
             else if (normalized.Contains("microphone") || normalized.Contains("audio"))
             {
-                ErrorMessage = "🎤 Microphone Error: Please ensure microphone access is granted and your browser supports microphone access over HTTPS.";
+                ErrorMessage = error; // Use the detailed microphone error from service
             }
             else if (normalized.Contains("network") || normalized.Contains("connection"))
             {
-                ErrorMessage = "🌐 Network Error: Please check your internet connection and Speech service availability.";
+                // Network errors often indicate missing config, so show the full message
+                ErrorMessage = error;
             }
             else
             {
-                ErrorMessage = $"❌ Error: {error}";
+                ErrorMessage = error; // Show the full error message for visibility
+            }
+
+            TranscriptionStatus = error;
+
+            StateHasChanged();
+        });
+    }
+
+    private void OnStatusHandler(object? sender, string message)
+    {
+        InvokeAsync(() =>
+        {
+            TranscriptionStatus = message;
+
+            var normalized = message.ToLowerInvariant();
+            if (normalized.Contains("started") || normalized.Contains("resumed"))
+            {
+                IsRecognizing = true;
+            }
+            else if (normalized.Contains("stopped") || normalized.Contains("failed"))
+            {
+                IsRecognizing = false;
             }
 
             StateHasChanged();
@@ -446,6 +483,7 @@
             
             CommandFeedback = string.Empty;
             ErrorMessage = string.Empty;
+            TranscriptionStatus = "Starting transcription...";
             IsRecognizing = true;
             StateHasChanged();
             
@@ -491,6 +529,7 @@
             IsRecognizing = false;
             RecognitionCancellationToken?.Cancel();
             await SpeechService.StopRecognitionAsync();
+            TranscriptionStatus = "Transcription stopped.";
         }
         catch (Exception ex)
         {
@@ -643,6 +682,7 @@
         SpeechService.OnTranscribing -= OnTranscribingHandler;
         SpeechService.OnTranscribed -= OnTranscribedHandler;
         SpeechService.OnError -= OnErrorHandler;
+        SpeechService.OnStatus -= OnStatusHandler;
         RecognitionCancellationToken?.Dispose();
         await Task.CompletedTask;
     }
