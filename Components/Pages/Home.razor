@@ -4,6 +4,7 @@
 @using System.Globalization
 @using System.Text.Json
 @inject SpeechRecognitionService SpeechService
+@inject AgentOrchestrator AgentOrchestrator
 @inject IJSRuntime JSRuntime
 @implements IAsyncDisposable
 
@@ -279,6 +280,8 @@
             TrackSpeaker(result.SpeakerId);
             StateHasChanged();
         });
+
+        _ = AgentOrchestrator.ProcessTranscriptAsync(result);
     }
 
     private void OnErrorHandler(object? sender, string error)
@@ -600,12 +603,12 @@
         StateHasChanged();
     }
 
-    private Task HandleSpeakerCommandAsync(string input)
+    private async Task HandleSpeakerCommandAsync(string input)
     {
         if (string.IsNullOrEmpty(LastSpeakerId))
         {
             CommandFeedback = "⚠️ No speaker detected yet. Say something first, then use /speaker.";
-            return Task.CompletedTask;
+            return;
         }
 
         var previousName = GetDisplayName(LastSpeakerId);
@@ -617,7 +620,7 @@
 
         SpeakerAliases[LastSpeakerId] = alias;
         CommandFeedback = $"✅ Speaker '{previousName}' is now identified as \"{alias}\".";
-        return Task.CompletedTask;
+        await AgentOrchestrator.UpdateSpeakerAsync(LastSpeakerId, alias, string.Empty);
     }
 
     private string GetDisplayName(string speakerId)

@@ -31,12 +31,17 @@ public sealed class SpeechRecognitionService : IDisposable
 
     public SpeechRecognitionService(IConfiguration configuration)
     {
-        var endpointFromConfig = configuration["AzureSpeech:Endpoint"] ??
+        var endpointFromConfig = configuration["AzureAI:SpeechEndpoint"] ??
+            configuration["AzureSpeech:Endpoint"] ??
+            Environment.GetEnvironmentVariable("AZUREAI_SPEECHENDPOINT") ??
+            Environment.GetEnvironmentVariable("AZUREAI_SPEECH_ENDPOINT") ??
             Environment.GetEnvironmentVariable("AZURE_SPEECH_ENDPOINT") ??
             Environment.GetEnvironmentVariable("AZURESPEECH_ENDPOINT") ??
             Environment.GetEnvironmentVariable("ENDPOINT");
 
-        var regionFromConfig = configuration["AzureSpeech:Region"] ??
+        var regionFromConfig = configuration["AzureAI:Region"] ??
+            configuration["AzureSpeech:Region"] ??
+            Environment.GetEnvironmentVariable("AZUREAI_REGION") ??
             Environment.GetEnvironmentVariable("AZURE_SPEECH_REGION") ??
             Environment.GetEnvironmentVariable("AZURESPEECH_REGION");
 
@@ -53,8 +58,12 @@ public sealed class SpeechRecognitionService : IDisposable
             _conversationEndpoint = BuildConversationEndpoint(defaultEndpoint);
         }
 
-        _subscriptionKey = configuration["AzureSpeech:SubscriptionKey"] ??
+        _subscriptionKey = configuration["AzureAI:APIKey"] ??
+            configuration["AzureAI:SpeechKey"] ??
+            configuration["AzureSpeech:SubscriptionKey"] ??
             configuration["AzureSpeech:SpeechKey"] ??
+            Environment.GetEnvironmentVariable("AZUREAI_APIKEY") ??
+            Environment.GetEnvironmentVariable("AZUREAI_SPEECH_KEY") ??
             Environment.GetEnvironmentVariable("SPEECH_KEY") ??
             configuration["AZURE_SPEECH_KEY"] ??
             Environment.GetEnvironmentVariable("AZURE_SPEECH_KEY");

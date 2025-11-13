@@ -1,7 +1,13 @@
-using meeting_copilot.Components;
-using meeting_copilot.Services;
 using Azure.Identity;
 using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using meeting_copilot.Agents;
+using meeting_copilot.Components;
+using meeting_copilot.Data;
+using meeting_copilot.Data.Repositories;
+using meeting_copilot.Services;
+using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +27,17 @@ if (builder.Environment.IsProduction())
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+builder.Services.AddHttpClient();
+builder.Services.AddAGUI();
+builder.Services.AddSingleton<AgentCatalog>();
+
+builder.Services.AddDbContext<MeetingCopilotDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("MeetingCopilot") ?? "Data Source=meetingcopilot.db"));
+
+builder.Services.AddScoped<KeypointRepository>();
+builder.Services.AddScoped<GuestInfoRepository>();
+builder.Services.AddScoped<AgentOrchestrator>();
 
 // Add Azure Speech Recognition Service
 builder.Services.AddScoped<SpeechRecognitionService>();
@@ -50,14 +67,20 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+app.UseStatusCodePagesWithReExecute("/not-found");
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 
 app.UseAntiforgery();
 
-app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<MeetingCopilotDbContext>();
+    await dbContext.Database.EnsureCreatedAsync();
+}
 
 // Add diagnostic endpoint for debugging authentication
 app.MapGet("/api/diagnostics", (SpeechRecognitionService speechService) =>
@@ -140,5 +163,9 @@ app.MapPost("/api/test-auth", async (SpeechRecognitionService speechService) =>
         });
     }
 });
+
+var agentCatalog = app.Services.GetRequiredService<AgentCatalog>();
+app.MapAGUI("/agents/keypoints", agentCatalog.KeypointAgent);
+app.MapAGUI("/agents/speakers", agentCatalog.SpeakerAgent);
 
 app.Run();
