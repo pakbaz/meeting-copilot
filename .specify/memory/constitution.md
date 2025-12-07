@@ -137,8 +137,9 @@ and speech recognition edge cases are handled correctly.
 - Azure App Service or Container Apps for hosting
 
 **Data Access**:
-- Entity Framework Core 8.0+ with SQLite (development) or Azure SQL (production)
+- Azure Cosmos DB NoSQL with vector search for all environments (local emulator for development)
 - Repository pattern for data access abstraction
+- james-tn/agent-memory patterns for AI agent state persistence
 
 **AI/Agent Framework**:
 - Microsoft.Agents.AI (preview)
