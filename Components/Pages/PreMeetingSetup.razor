@@ -1,0 +1,201 @@
+@page "/meeting/setup"
+@using meeting_copilot.Services
+@using MeetingCopilot.Contracts.Entities
+@using System.Net.Http.Json
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject ILogger<PreMeetingSetup> Logger
+
+<PageTitle>Pre-Meeting Setup</PageTitle>
+
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="mb-0">Setup Your Meeting</h3>
+                </div>
+                <div class="card-body">
+                    <EditForm Model="@setupModel" OnValidSubmit="HandleStartMeeting">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-danger" />
+
+                        <!-- Meeting Title -->
+                        <div class="mb-3">
+                            <label for="title" class="form-label">Meeting Title *</label>
+                            <InputText id="title" 
+                                      class="form-control" 
+                                      @bind-Value="setupModel.Title" 
+                                      placeholder="Enter meeting title" />
+                        </div>
+
+                        <!-- Meeting Description -->
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description (Optional)</label>
+                            <InputTextArea id="description" 
+                                          class="form-control" 
+                                          @bind-Value="setupModel.Description" 
+                                          rows="3"
+                                          placeholder="Add any context or notes..." />
+                        </div>
+
+                        <!-- Microphone Selector -->
+                        <div class="mb-3">
+                            <MicrophoneSelector SelectedDeviceId="@setupModel.MicrophoneDeviceId" 
+                                              SelectedDeviceIdChanged="@OnMicrophoneDeviceChanged" />
+                        </div>
+
+                        <!-- Agenda Editor -->
+                        <div class="mb-3">
+                            <AgendaEditor AgendaItems="@setupModel.AgendaItems" 
+                                        AgendaItemsChanged="@OnAgendaItemsChanged" />
+                        </div>
+
+                        <!-- Attachment Uploader -->
+                        <div class="mb-3">
+                            <AttachmentUploader Attachments="@setupModel.Attachments" 
+                                              AttachmentsChanged="@OnAttachmentsChanged" />
+                        </div>
+
+                        <!-- Language Selection -->
+                        <div class="mb-3">
+                            <label for="language" class="form-label">Language</label>
+                            <InputSelect id="language" class="form-select" @bind-Value="setupModel.Language">
+                                <option value="en-US">English (US)</option>
+                                <option value="en-GB">English (UK)</option>
+                                <option value="es-ES">Spanish</option>
+                                <option value="fr-FR">French</option>
+                                <option value="de-DE">German</option>
+                                <option value="ja-JP">Japanese</option>
+                                <option value="zh-CN">Chinese (Simplified)</option>
+                            </InputSelect>
+                        </div>
+
+                        <!-- Error Message -->
+                        @if (!string.IsNullOrEmpty(errorMessage))
+                        {
+                            <div class="alert alert-danger" role="alert">
+                                @errorMessage
+                            </div>
+                        }
+
+                        <!-- Action Buttons -->
+                        <div class="d-flex justify-content-between mt-4">
+                            <button type="button" 
+                                    class="btn btn-outline-secondary"
+                                    @onclick="HandleCancel">
+                                Cancel
+                            </button>
+                            <button type="submit" 
+                                    class="btn btn-primary"
+                                    disabled="@isSubmitting">
+                                @if (isSubmitting)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                    <span>Starting...</span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-play-fill me-2"></i>
+                                    <span>Start Meeting</span>
+                                }
+                            </button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private PreMeetingSetupModel setupModel = new();
+    private bool isSubmitting = false;
+    private string? errorMessage;
+
+    private async Task HandleStartMeeting()
+    {
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            // Create meeting via API
+            var request = new
+            {
+                setupModel.Title,
+                setupModel.Description,
+                setupModel.AgendaItems,
+                setupModel.Attachments,
+                setupModel.MicrophoneDeviceId,
+                setupModel.Language
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/meetings", request);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var meeting = await response.Content.ReadFromJsonAsync<Meeting>();
+                
+                if (meeting != null)
+                {
+                    // Start the meeting
+                    var startResponse = await Http.PostAsync($"/api/meetings/{meeting.Id}/start", null);
+                    
+                    if (startResponse.IsSuccessStatusCode)
+                    {
+                        // Navigate to in-meeting view
+                        Navigation.NavigateTo($"/meeting/{meeting.Id}");
+                    }
+                    else
+                    {
+                        errorMessage = "Failed to start meeting. Please try again.";
+                    }
+                }
+            }
+            else
+            {
+                errorMessage = "Failed to create meeting. Please try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error starting meeting");
+            errorMessage = $"An error occurred: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void HandleCancel()
+    {
+        Navigation.NavigateTo("/");
+    }
+
+    private void OnMicrophoneDeviceChanged(string? deviceId)
+    {
+        setupModel.MicrophoneDeviceId = deviceId;
+    }
+
+    private void OnAgendaItemsChanged(List<AgendaItem> items)
+    {
+        setupModel.AgendaItems = items;
+    }
+
+    private void OnAttachmentsChanged(List<AttachmentRef> attachments)
+    {
+        setupModel.Attachments = attachments;
+    }
+
+    public class PreMeetingSetupModel
+    {
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+        public string? MicrophoneDeviceId { get; set; }
+        public List<AgendaItem> AgendaItems { get; set; } = new();
+        public List<AttachmentRef> Attachments { get; set; } = new();
+        public string Language { get; set; } = "en-US";
+    }
+}

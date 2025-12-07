@@ -1,0 +1,166 @@
+@page "/meeting/{MeetingId}"
+@using meeting_copilot.Services
+@using MeetingCopilot.Contracts.Entities
+@inject NavigationManager Navigation
+@inject ILogger<InMeeting> Logger
+
+<PageTitle>Meeting in Progress</PageTitle>
+
+<div class="meeting-container">
+    @if (meeting == null)
+    {
+        <div class="text-center mt-5">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading meeting...</p>
+        </div>
+    }
+    else
+    {
+        <!-- Top Bar (Phase 12 - US10) -->
+        <div class="meeting-top-bar bg-dark text-white p-3">
+            <div class="container-fluid">
+                <div class="row align-items-center">
+                    <div class="col">
+                        <h4 class="mb-0">@meeting.Title</h4>
+                        <small class="text-muted">Meeting ID: @meeting.Id</small>
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-danger" @onclick="HandleEndMeeting">
+                            <i class="bi bi-stop-fill"></i> End Meeting
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Meeting Area -->
+        <div class="container-fluid mt-3">
+            <div class="row">
+                <!-- Left Panel: Transcript (Phase 4 - US2) -->
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-mic"></i> Transcript</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Transcription will appear here...</p>
+                            <!-- TranscriptPanel will go here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Middle Panel: Q&A and Key Points -->
+                <div class="col-md-4">
+                    <!-- Answer Panel (Phase 5 - US3) -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-question-circle"></i> Answers</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">AI answers will appear here...</p>
+                            <!-- AnswerPanel will go here -->
+                        </div>
+                    </div>
+
+                    <!-- Key Points Panel (Phase 6 - US4) -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-star"></i> Key Points</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Key points will appear here...</p>
+                            <!-- KeyPointsPanel will go here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Research and Summary -->
+                <div class="col-md-4">
+                    <!-- Research Panel (Phase 7 - US5) -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-search"></i> Research</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Research results will appear here...</p>
+                            <!-- ResearchPanel will go here -->
+                        </div>
+                    </div>
+
+                    <!-- Summary Panel (Phase 8 - US6) -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-list-check"></i> Summary</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Meeting summary will appear here...</p>
+                            <!-- SummaryPanel will go here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom: Input Area (Phase 11 - US9) -->
+            <div class="row mt-3">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-body">
+                            <input type="text" 
+                                   class="form-control" 
+                                   placeholder="Type a command (e.g., /speaker John, /research topic)..." />
+                            <!-- CollapsedInputArea will go here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string MeetingId { get; set; } = "";
+    [Inject] private MeetingService MeetingService { get; set; } = default!;
+    
+    private Meeting? meeting;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMeetingAsync();
+    }
+
+    private async Task LoadMeetingAsync()
+    {
+        try
+        {
+            meeting = await MeetingService.GetMeetingAsync(MeetingId);
+            
+            if (meeting == null)
+            {
+                errorMessage = "Meeting not found";
+                Navigation.NavigateTo("/");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading meeting {MeetingId}", MeetingId);
+            errorMessage = "Error loading meeting";
+        }
+    }
+
+    private async Task HandleEndMeeting()
+    {
+        // TODO: Confirmation dialog
+        try
+        {
+            await MeetingService.EndMeetingAsync(MeetingId);
+            Navigation.NavigateTo($"/meeting/{MeetingId}/summary");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error ending meeting {MeetingId}", MeetingId);
+        }
+    }
+}

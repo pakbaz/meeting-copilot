@@ -179,6 +179,13 @@ builder.Services.AddScoped<meeting_copilot.Agents.AgentOrchestrator>();
 // Add Azure Speech Recognition Service
 builder.Services.AddScoped<SpeechRecognitionService>();
 
+// Add Meeting Services
+builder.Services.AddScoped<MeetingService>();
+builder.Services.AddScoped<MicrophoneService>();
+
+// Add API Controllers
+builder.Services.AddControllers();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -212,6 +219,9 @@ app.UseAntiforgery();
 
 // Map Aspire health check endpoints
 app.MapDefaultEndpoints();
+
+// Map API Controllers
+app.MapControllers();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

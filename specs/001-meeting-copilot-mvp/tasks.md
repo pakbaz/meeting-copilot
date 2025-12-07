@@ -101,15 +101,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T044 [US1] Create `PreMeetingSetup.razor` component in `Components/Pages/PreMeetingSetup.razor`
-- [ ] T045 [US1] Implement microphone device enumeration in `Services/MicrophoneService.cs`
-- [ ] T046 [P] [US1] Create `MicrophoneSelector.razor` component in `Components/Shared/MicrophoneSelector.razor`
-- [ ] T047 [P] [US1] Create `AgendaEditor.razor` component in `Components/Shared/AgendaEditor.razor`
-- [ ] T048 [P] [US1] Create `AttachmentUploader.razor` component in `Components/Shared/AttachmentUploader.razor`
-- [ ] T049 [US1] Implement `MeetingService.cs` for meeting CRUD in `Services/MeetingService.cs`
-- [ ] T050 [US1] Add meeting creation endpoint `POST /api/meetings` in `Controllers/MeetingsController.cs`
-- [ ] T051 [US1] Implement "Start Meeting" button navigation to in-meeting view
-- [ ] T052 [US1] Store meeting to Cosmos DB via `CosmosMeetingRepository` on Start Meeting
+- [X] T044 [US1] Create `PreMeetingSetup.razor` component in `Components/Pages/PreMeetingSetup.razor`
+- [X] T045 [US1] Implement microphone device enumeration in `Services/MicrophoneService.cs`
+- [X] T046 [P] [US1] Create `MicrophoneSelector.razor` component in `Components/Shared/MicrophoneSelector.razor`
+- [X] T047 [P] [US1] Create `AgendaEditor.razor` component in `Components/Shared/AgendaEditor.razor`
+- [X] T048 [P] [US1] Create `AttachmentUploader.razor` component in `Components/Shared/AttachmentUploader.razor`
+- [X] T049 [US1] Implement `MeetingService.cs` for meeting CRUD in `Services/MeetingService.cs`
+- [X] T050 [US1] Add meeting creation endpoint `POST /api/meetings` in `Controllers/MeetingsController.cs`
+- [X] T051 [US1] Implement "Start Meeting" button navigation to in-meeting view
+- [X] T052 [US1] Store meeting to Cosmos DB via `CosmosMeetingRepository` on Start Meeting
 
 **Checkpoint**: User Story 1 complete - pre-meeting setup functional
 

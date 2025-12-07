@@ -1,0 +1,155 @@
+@using MeetingCopilot.Contracts.Entities
+
+<div class="attachment-uploader">
+    <label class="form-label">Attachments (Optional)</label>
+    
+    <div class="upload-area border rounded p-3 @(IsDragging ? "bg-light" : "")"
+         @ondragenter="HandleDragEnter"
+         @ondragleave="HandleDragLeave"
+         @ondragover:preventDefault
+         @ondrop="HandleDrop"
+         @ondrop:preventDefault>
+        
+        <div class="text-center">
+            <i class="bi bi-cloud-upload fs-2 text-muted"></i>
+            <p class="mb-2">Drag and drop files here, or</p>
+            <InputFile OnChange="HandleFileSelection" multiple class="d-none" id="fileInput" />
+            <label for="fileInput" class="btn btn-sm btn-outline-primary">
+                Browse Files
+            </label>
+            <p class="small text-muted mt-2">Supported: PDF, DOCX, TXT, Images (max 10MB each)</p>
+        </div>
+    </div>
+    
+    @if (Attachments != null && Attachments.Count > 0)
+    {
+        <div class="attachments-list mt-3">
+            <h6>Uploaded Files:</h6>
+            <ul class="list-group">
+                @foreach (var attachment in Attachments)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-file-earmark"></i>
+                            <span class="ms-2">@attachment.Filename</span>
+                            <small class="text-muted ms-2">(@attachment.ContentType)</small>
+                        </div>
+                        <button type="button" 
+                                class="btn btn-sm btn-outline-danger"
+                                @onclick="@(() => RemoveAttachment(attachment.Id))">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+    
+    @if (IsUploading)
+    {
+        <div class="mt-2">
+            <div class="progress">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" 
+                     style="width: 100%">Uploading...</div>
+            </div>
+        </div>
+    }
+    
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+        <div class="alert alert-danger mt-2" role="alert">
+            @ErrorMessage
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<AttachmentRef> Attachments { get; set; } = new();
+    [Parameter] public EventCallback<List<AttachmentRef>> AttachmentsChanged { get; set; }
+    
+    private bool IsDragging { get; set; }
+    private bool IsUploading { get; set; }
+    private string? ErrorMessage { get; set; }
+    
+    private const long MaxFileSize = 10 * 1024 * 1024; // 10MB
+    private static readonly string[] AllowedExtensions = { ".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg", ".gif" };
+
+    private void HandleDragEnter()
+    {
+        IsDragging = true;
+    }
+
+    private void HandleDragLeave()
+    {
+        IsDragging = false;
+    }
+
+    private async Task HandleDrop()
+    {
+        IsDragging = false;
+        // File drop handling would go here
+        // For MVP, we'll just show a message
+        ErrorMessage = "File drop functionality coming soon. Please use Browse Files button.";
+    }
+
+    private async Task HandleFileSelection(InputFileChangeEventArgs e)
+    {
+        ErrorMessage = null;
+        IsUploading = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                // Validate file size
+                if (file.Size > MaxFileSize)
+                {
+                    ErrorMessage = $"File {file.Name} exceeds maximum size of 10MB";
+                    continue;
+                }
+
+                // Validate file extension
+                var extension = Path.GetExtension(file.Name).ToLowerInvariant();
+                if (!AllowedExtensions.Contains(extension))
+                {
+                    ErrorMessage = $"File type {extension} is not supported";
+                    continue;
+                }
+
+                // For MVP, we're just creating placeholder attachment references
+                // In production, files would be uploaded to Azure Blob Storage
+                var attachment = new AttachmentRef
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Filename = file.Name,
+                    ContentType = file.ContentType,
+                    BlobUri = $"blob://placeholder/{file.Name}", // TODO: Implement actual blob upload
+                    UploadedAt = DateTimeOffset.UtcNow
+                };
+
+                Attachments.Add(attachment);
+            }
+
+            await AttachmentsChanged.InvokeAsync(Attachments);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Error uploading files: {ex.Message}";
+        }
+        finally
+        {
+            IsUploading = false;
+        }
+    }
+
+    private async Task RemoveAttachment(string attachmentId)
+    {
+        var attachment = Attachments.FirstOrDefault(a => a.Id == attachmentId);
+        if (attachment != null)
+        {
+            Attachments.Remove(attachment);
+            await AttachmentsChanged.InvokeAsync(Attachments);
+        }
+    }
+}

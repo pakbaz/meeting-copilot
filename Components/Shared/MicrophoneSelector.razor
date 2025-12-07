@@ -1,0 +1,89 @@
+@using meeting_copilot.Services
+
+<div class="microphone-selector">
+    <label for="microphone-select" class="form-label">Select Microphone</label>
+    <select id="microphone-select" 
+            class="form-select" 
+            @bind="SelectedDeviceId" 
+            @bind:after="OnDeviceChanged">
+        @if (Devices != null)
+        {
+            @foreach (var device in Devices)
+            {
+                <option value="@device.Id">
+                    @device.Name @(device.IsDefault ? "(Default)" : "")
+                </option>
+            }
+        }
+        else if (IsLoading)
+        {
+            <option value="">Loading devices...</option>
+        }
+        else
+        {
+            <option value="">No devices found</option>
+        }
+    </select>
+    
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+        <div class="alert alert-warning mt-2" role="alert">
+            @ErrorMessage
+        </div>
+    }
+</div>
+
+@code {
+    [Inject] private MicrophoneService MicrophoneService { get; set; } = default!;
+    
+    [Parameter] public string? SelectedDeviceId { get; set; }
+    [Parameter] public EventCallback<string?> SelectedDeviceIdChanged { get; set; }
+    
+    private List<MicrophoneDevice>? Devices { get; set; }
+    private bool IsLoading { get; set; } = true;
+    private string? ErrorMessage { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevicesAsync();
+    }
+
+    private async Task LoadDevicesAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        
+        try
+        {
+            Devices = await MicrophoneService.EnumerateDevicesAsync();
+            
+            if (Devices.Count == 0)
+            {
+                ErrorMessage = "No microphones detected. Please check your system settings.";
+            }
+            else if (string.IsNullOrEmpty(SelectedDeviceId))
+            {
+                // Select default device
+                var defaultDevice = Devices.FirstOrDefault(d => d.IsDefault);
+                if (defaultDevice != null)
+                {
+                    SelectedDeviceId = defaultDevice.Id;
+                    await SelectedDeviceIdChanged.InvokeAsync(SelectedDeviceId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Error loading microphones: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task OnDeviceChanged()
+    {
+        await SelectedDeviceIdChanged.InvokeAsync(SelectedDeviceId);
+    }
+}

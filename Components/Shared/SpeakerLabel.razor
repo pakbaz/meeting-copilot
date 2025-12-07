@@ -1,0 +1,41 @@
+@code {
+    [Parameter] public string SpeakerId { get; set; } = "";
+    [Parameter] public string? DisplayName { get; set; }
+
+    private string GetDisplayText()
+    {
+        if (!string.IsNullOrEmpty(DisplayName))
+        {
+            return DisplayName;
+        }
+
+        // Format speaker ID (e.g., "Guest-1" -> "Guest 1")
+        if (SpeakerId.StartsWith("Guest-", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Guest {SpeakerId.Substring(6)}";
+        }
+
+        return SpeakerId;
+    }
+
+    private string GetBadgeClass()
+    {
+        // Assign consistent colors based on speaker ID
+        var hash = Math.Abs(SpeakerId.GetHashCode());
+        var colorIndex = hash % 6;
+
+        return colorIndex switch
+        {
+            0 => "bg-primary",
+            1 => "bg-success",
+            2 => "bg-info",
+            3 => "bg-warning text-dark",
+            4 => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+}
+
+<span class="badge @GetBadgeClass()">
+    <i class="bi bi-person-fill"></i> @GetDisplayText()
+</span>
