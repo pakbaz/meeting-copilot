@@ -19,15 +19,15 @@
 
 **Purpose**: Project restructuring for Aspire orchestration and shared projects
 
-- [ ] T001 Create Aspire AppHost project at `MeetingCopilot.AppHost/MeetingCopilot.AppHost.csproj`
-- [ ] T002 Create ServiceDefaults project at `MeetingCopilot.ServiceDefaults/MeetingCopilot.ServiceDefaults.csproj`
-- [ ] T003 [P] Create Contracts project at `src/MeetingCopilot.Contracts/MeetingCopilot.Contracts.csproj`
-- [ ] T004 [P] Create Memory project at `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
-- [ ] T005 [P] Create Agents project at `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
-- [ ] T006 Update solution file `meeting-copilot.sln` to include all new projects
-- [ ] T007 Configure Aspire service topology in `MeetingCopilot.AppHost/Program.cs`
-- [ ] T008 [P] Add Microsoft.Agents.AI preview packages to `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
-- [ ] T009 [P] Add Microsoft.Azure.Cosmos package to `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
+- [X] T001 Create Aspire AppHost project at `MeetingCopilot.AppHost/MeetingCopilot.AppHost.csproj`
+- [X] T002 Create ServiceDefaults project at `MeetingCopilot.ServiceDefaults/MeetingCopilot.ServiceDefaults.csproj`
+- [X] T003 [P] Create Contracts project at `src/MeetingCopilot.Contracts/MeetingCopilot.Contracts.csproj`
+- [X] T004 [P] Create Memory project at `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
+- [X] T005 [P] Create Agents project at `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
+- [X] T006 Update solution file `meeting-copilot.sln` to include all new projects
+- [X] T007 Configure Aspire service topology in `MeetingCopilot.AppHost/Program.cs`
+- [X] T008 [P] Add Microsoft.Agents.AI preview packages to `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
+- [X] T009 [P] Add Microsoft.Azure.Cosmos package to `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
 
 ---
 

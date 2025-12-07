@@ -1,15 +1,25 @@
+using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Extensions.AspNetCore.Configuration.Secrets;
 using meeting_copilot.Agents;
 using meeting_copilot.Components;
 using meeting_copilot.Data;
 using meeting_copilot.Data.Repositories;
+using meeting_copilot.Hubs;
 using meeting_copilot.Services;
+using MeetingCopilot.Agents;
+using MeetingCopilot.Contracts.Interfaces;
+using MeetingCopilot.Memory;
+using MeetingCopilot.Memory.Repositories;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
+using Microsoft.Azure.Cosmos;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add Aspire ServiceDefaults for OpenTelemetry and health checks
+builder.AddServiceDefaults();
 
 // Configure secure configuration sources following Azure best practices
 if (builder.Environment.IsProduction())
@@ -28,16 +38,143 @@ if (builder.Environment.IsProduction())
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// Add SignalR
+builder.Services.AddSignalR();
+
 builder.Services.AddHttpClient();
 builder.Services.AddAGUI();
 builder.Services.AddSingleton<AgentCatalog>();
 
+// Cosmos DB Configuration
+var cosmosConnectionString = builder.Configuration.GetConnectionString("CosmosDb");
+var cosmosDatabaseName = builder.Configuration["CosmosDb:DatabaseName"] ?? "meetingcopilot";
+
+if (!string.IsNullOrEmpty(cosmosConnectionString))
+{
+    builder.Services.AddSingleton<CosmosClient>(sp =>
+    {
+        var options = new CosmosClientOptions
+        {
+            SerializerOptions = new CosmosSerializationOptions
+            {
+                PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
+            }
+        };
+        return new CosmosClient(cosmosConnectionString, options);
+    });
+}
+else
+{
+    // Fallback to account endpoint and key for development
+    var accountEndpoint = builder.Configuration["CosmosDb:AccountEndpoint"];
+    var accountKey = builder.Configuration["CosmosDb:AccountKey"];
+    
+    if (!string.IsNullOrEmpty(accountEndpoint) && !string.IsNullOrEmpty(accountKey))
+    {
+        builder.Services.AddSingleton<CosmosClient>(sp =>
+        {
+            var options = new CosmosClientOptions
+            {
+                SerializerOptions = new CosmosSerializationOptions
+                {
+                    PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
+                }
+            };
+            return new CosmosClient(accountEndpoint, accountKey, options);
+        });
+    }
+}
+
+// OpenAI Client Configuration
+var openAIEndpoint = builder.Configuration["AzureAI:OpenAIEndpoint"];
+var embeddingModel = builder.Configuration["AzureAI:EmbeddingModel"] ?? "text-embedding-3-large";
+
+if (!string.IsNullOrEmpty(openAIEndpoint))
+{
+    builder.Services.AddSingleton<AzureOpenAIClient>(sp =>
+    {
+        return new AzureOpenAIClient(new Uri(openAIEndpoint), new DefaultAzureCredential());
+    });
+    
+    builder.Services.AddSingleton<OpenAI.Embeddings.EmbeddingClient>(sp =>
+    {
+        var azureClient = sp.GetRequiredService<AzureOpenAIClient>();
+        return azureClient.GetEmbeddingClient(embeddingModel);
+    });
+}
+
+// Cosmos DB Services
+builder.Services.AddSingleton<CosmosContainerInitializer>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var logger = sp.GetRequiredService<ILogger<CosmosContainerInitializer>>();
+    return new CosmosContainerInitializer(cosmosClient, cosmosDatabaseName, logger);
+});
+
+// Embedding and Memory Services
+builder.Services.AddSingleton<IEmbeddingService>(sp =>
+{
+    var embeddingClient = sp.GetRequiredService<OpenAI.Embeddings.EmbeddingClient>();
+    var logger = sp.GetRequiredService<ILogger<EmbeddingService>>();
+    return new EmbeddingService(embeddingClient, logger);
+});
+
+builder.Services.AddScoped<IMemoryProvider>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var embeddingService = sp.GetRequiredService<IEmbeddingService>();
+    var logger = sp.GetRequiredService<ILogger<CosmosMemoryProvider>>();
+    return new CosmosMemoryProvider(cosmosClient, cosmosDatabaseName, embeddingService, logger);
+});
+
+builder.Services.AddScoped<VectorSearchService>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var embeddingService = sp.GetRequiredService<IEmbeddingService>();
+    var logger = sp.GetRequiredService<ILogger<VectorSearchService>>();
+    return new VectorSearchService(cosmosClient, cosmosDatabaseName, embeddingService, logger);
+});
+
+// Repositories
+builder.Services.AddScoped<IMeetingRepository>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var logger = sp.GetRequiredService<ILogger<CosmosMeetingRepository>>();
+    return new CosmosMeetingRepository(cosmosClient, cosmosDatabaseName, logger);
+});
+
+builder.Services.AddScoped<ISpeakerRepository>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var logger = sp.GetRequiredService<ILogger<CosmosSpeakerRepository>>();
+    return new CosmosSpeakerRepository(cosmosClient, cosmosDatabaseName, logger);
+});
+
+builder.Services.AddScoped<IInteractionRepository>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var logger = sp.GetRequiredService<ILogger<CosmosInteractionRepository>>();
+    return new CosmosInteractionRepository(cosmosClient, cosmosDatabaseName, logger);
+});
+
+builder.Services.AddScoped<IInsightRepository>(sp =>
+{
+    var cosmosClient = sp.GetRequiredService<CosmosClient>();
+    var logger = sp.GetRequiredService<ILogger<CosmosInsightRepository>>();
+    return new CosmosInsightRepository(cosmosClient, cosmosDatabaseName, logger);
+});
+
+// Agent Infrastructure
+builder.Services.AddSingleton<AgentPriorityQueue>();
+builder.Services.AddHostedService<MeetingCopilot.Agents.AgentOrchestrator>();
+
+// Legacy services (will be migrated)
 builder.Services.AddDbContext<MeetingCopilotDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("MeetingCopilot") ?? "Data Source=meetingcopilot.db"));
 
 builder.Services.AddScoped<KeypointRepository>();
 builder.Services.AddScoped<GuestInfoRepository>();
-builder.Services.AddScoped<AgentOrchestrator>();
+builder.Services.AddScoped<meeting_copilot.Agents.AgentOrchestrator>();
 
 // Add Azure Speech Recognition Service
 builder.Services.AddScoped<SpeechRecognitionService>();
@@ -73,13 +210,27 @@ app.UseStaticFiles();
 
 app.UseAntiforgery();
 
+// Map Aspire health check endpoints
+app.MapDefaultEndpoints();
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
+// Map SignalR hub
+app.MapHub<MeetingHub>("/hubs/meeting");
+
+// Initialize Cosmos DB containers
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<MeetingCopilotDbContext>();
     await dbContext.Database.EnsureCreatedAsync();
+    
+    // Initialize Cosmos DB if configured
+    if (scope.ServiceProvider.GetService<CosmosClient>() != null)
+    {
+        var containerInitializer = scope.ServiceProvider.GetRequiredService<CosmosContainerInitializer>();
+        await containerInitializer.InitializeAsync();
+    }
 }
 
 // Add diagnostic endpoint for debugging authentication

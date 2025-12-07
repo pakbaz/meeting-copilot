@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Suppress Aspire workload deprecation warning/error -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);NETSDK1228</MSBuildWarningsAsMessages>
+    <NoWarn>$(NoWarn);NETSDK1228</NoWarn>
+  </PropertyGroup>
+</Project>

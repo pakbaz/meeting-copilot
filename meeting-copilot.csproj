@@ -10,12 +10,22 @@
     <UserSecretsId>71453501-0a36-45f6-bc90-094d4ae70460</UserSecretsId>
   </PropertyGroup>
 
+  <!-- Exclude subdirectories from compilation as they are separate projects -->
   <ItemGroup>
-    <PackageReference Include="Azure.AI.OpenAI" Version="2.0.0" />
+    <Compile Remove="src/**/*.cs" />
+    <Compile Remove="MeetingCopilot.AppHost/**/*.cs" />
+    <Compile Remove="MeetingCopilot.ServiceDefaults/**/*.cs" />
+    <None Include="src/**/*.cs" />
+    <None Include="MeetingCopilot.AppHost/**/*.cs" />
+    <None Include="MeetingCopilot.ServiceDefaults/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
     <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.4.0" />
     <PackageReference Include="Azure.Identity" Version="1.17.0" />
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.251107.1" />
-    <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.0.0-preview.251107.1" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.251204.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.0.0-preview.251204.1" />
     <PackageReference Include="Microsoft.CognitiveServices.Speech" Version="1.43.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.6" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.6">
@@ -23,8 +33,16 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.6" />
-    <PackageReference Include="Microsoft.Extensions.AI" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.0.0-preview.1.25560.10" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.0.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.0.1-preview.1.25571.5" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="MeetingCopilot.ServiceDefaults/MeetingCopilot.ServiceDefaults.csproj" />
+    <ProjectReference Include="src/MeetingCopilot.Contracts/MeetingCopilot.Contracts.csproj" />
+    <ProjectReference Include="src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj" />
+    <ProjectReference Include="src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj" />
   </ItemGroup>
 
 </Project>
