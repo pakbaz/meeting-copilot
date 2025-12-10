@@ -1,0 +1,102 @@
+@using MeetingCopilot.Contracts.Entities
+
+<div class="answer-panel">
+    <div class="panel-header d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0">
+            <i class="bi bi-chat-dots"></i> Answers
+        </h6>
+        @if (IsProcessing)
+        {
+            <span class="badge bg-warning">
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                Processing...
+            </span>
+        }
+    </div>
+
+    <div class="answer-content">
+        @if (CurrentAnswer != null)
+        {
+            <div class="current-answer p-3 bg-light rounded mb-3">
+                <div class="question-text mb-2">
+                    <small class="text-muted">Question:</small>
+                    <p class="mb-1"><strong>@CurrentAnswer.QuestionText</strong></p>
+                </div>
+                <div class="answer-text">
+                    <small class="text-muted">Answer:</small>
+                    <p class="mb-1">@CurrentAnswer.AnswerText</p>
+                </div>
+                @if (CurrentAnswer.Sources?.Count > 0)
+                {
+                    <div class="sources mt-2">
+                        <small class="text-muted">Sources: @string.Join(", ", CurrentAnswer.Sources)</small>
+                    </div>
+                }
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <span class="badge @GetConfidenceBadgeClass(CurrentAnswer.Confidence)">
+                        @GetConfidenceLabel(CurrentAnswer.Confidence)
+                    </span>
+                    <small class="text-muted">@CurrentAnswer.Timestamp.LocalDateTime.ToString("HH:mm:ss")</small>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="text-muted text-center py-4">
+                <i class="bi bi-question-circle"></i>
+                <p class="mb-0 mt-2">Answers to detected questions will appear here...</p>
+            </div>
+        }
+
+        @if (AnswerHistory.Count > 0)
+        {
+            <div class="answer-history">
+                <small class="text-muted d-block mb-2">Previous Answers</small>
+                @foreach (var answer in AnswerHistory.Take(5))
+                {
+                    <div class="history-item p-2 border-start border-2 mb-2 @(answer == CurrentAnswer ? "border-primary" : "border-secondary")">
+                        <div class="d-flex justify-content-between">
+                            <small class="text-truncate" style="max-width: 200px;">@answer.QuestionText</small>
+                            <small class="text-muted">@answer.Timestamp.LocalDateTime.ToString("HH:mm")</small>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public AnswerItem? CurrentAnswer { get; set; }
+    [Parameter] public List<AnswerItem> AnswerHistory { get; set; } = new();
+    [Parameter] public bool IsProcessing { get; set; }
+
+    public record AnswerItem(
+        string QuestionId,
+        string QuestionText,
+        string AnswerText,
+        double Confidence,
+        List<string>? Sources,
+        DateTimeOffset Timestamp
+    );
+
+    private string GetConfidenceBadgeClass(double confidence)
+    {
+        return confidence switch
+        {
+            >= 0.8 => "bg-success",
+            >= 0.6 => "bg-warning text-dark",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetConfidenceLabel(double confidence)
+    {
+        return confidence switch
+        {
+            >= 0.8 => "High confidence",
+            >= 0.6 => "Medium confidence",
+            _ => "Low confidence"
+        };
+    }
+}

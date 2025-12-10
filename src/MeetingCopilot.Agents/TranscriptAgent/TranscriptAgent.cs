@@ -1,7 +1,9 @@
 using MeetingCopilot.Contracts.Entities;
 using MeetingCopilot.Contracts.Events;
 using MeetingCopilot.Contracts.Interfaces;
+using MeetingCopilot.Contracts.Messages;
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace MeetingCopilot.Agents.TranscriptAgent;
 
@@ -13,6 +15,15 @@ public class TranscriptAgent : IAgent
     private readonly IInteractionRepository _interactionRepository;
     private readonly ISpeakerRepository _speakerRepository;
     private readonly ILogger<TranscriptAgent> _logger;
+
+    // Question detection patterns
+    private static readonly (string Pattern, double Confidence)[] QuestionPatterns = new[]
+    {
+        (@"^(?:what|who|where|when|why|how|which|whose|whom)\b", 0.95),
+        (@"^(?:can|could|would|should|will|do|does|did|is|are|was|were|have|has|had)\b.*\?", 0.9),
+        (@"\?$", 0.85),
+        (@"(?:do you know|can you tell|could you explain|would you mind)", 0.8),
+    };
 
     public string Name => "TranscriptAgent";
     public int Priority => 10; // High priority for real-time processing
@@ -27,19 +38,19 @@ public class TranscriptAgent : IAgent
         _logger = logger;
     }
 
-    public bool CanHandle(MeetingCopilot.Contracts.Messages.AgentMessage message)
+    public bool CanHandle(AgentMessage message)
     {
         // Handle transcription events
-        return message is MeetingCopilot.Contracts.Messages.UtteranceTranscribedMessage;
+        return message is UtteranceTranscribedMessage;
     }
 
-    public async Task<List<MeetingCopilot.Contracts.Messages.AgentMessage>> ProcessAsync(
-        MeetingCopilot.Contracts.Messages.AgentMessage message,
+    public async Task<List<AgentMessage>> ProcessAsync(
+        AgentMessage message,
         CancellationToken cancellationToken = default)
     {
-        var result = new List<MeetingCopilot.Contracts.Messages.AgentMessage>();
+        var result = new List<AgentMessage>();
         
-        if (message is not MeetingCopilot.Contracts.Messages.UtteranceTranscribedMessage transcription)
+        if (message is not UtteranceTranscribedMessage transcription)
         {
             _logger.LogWarning("Invalid message type: {Type}", message.GetType().Name);
             return result;
@@ -87,14 +98,41 @@ public class TranscriptAgent : IAgent
                 interaction.Id,
                 speaker.Id);
 
-            // Emit UtteranceProcessed message for other agents
-            result.Add(new MeetingCopilot.Contracts.Messages.UtteranceProcessedMessage
+            // Emit UtteranceProcessed message for other agents (SummaryAgent, etc.)
+            result.Add(new UtteranceProcessedMessage
             {
                 MeetingId = transcription.MeetingId,
                 UserId = transcription.UserId,
                 SourceAgent = Name,
                 Interaction = interaction
             });
+
+            // Check if the utterance is a question and emit QuestionDetectedMessage
+            var questionDetection = DetectQuestion(transcription.Text);
+            if (questionDetection.IsQuestion)
+            {
+                _logger.LogInformation(
+                    "Detected question with confidence {Confidence}: {Text}",
+                    questionDetection.Confidence,
+                    transcription.Text.Substring(0, Math.Min(50, transcription.Text.Length)));
+
+                result.Add(new QuestionDetectedMessage
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    MeetingId = transcription.MeetingId,
+                    UserId = transcription.UserId,
+                    SourceAgent = Name,
+                    Priority = 1, // Highest priority for questions
+                    Timestamp = DateTimeOffset.UtcNow,
+                    UtteranceId = interaction.Id,
+                    QuestionText = transcription.Text,
+                    SpeakerId = speaker.Id,
+                    SpeakerName = speaker.DisplayName ?? speaker.SpeakerLabel,
+                    Confidence = questionDetection.Confidence,
+                    QuestionType = questionDetection.QuestionType ?? "unknown",
+                    SpeakerPriority = speaker.PriorityRank
+                });
+            }
         }
         catch (Exception ex)
         {
@@ -102,6 +140,40 @@ public class TranscriptAgent : IAgent
         }
 
         return result;
+    }
+
+    private (bool IsQuestion, double Confidence, string? QuestionType) DetectQuestion(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return (false, 0, null);
+        }
+
+        var normalizedText = text.Trim().ToLowerInvariant();
+        
+        foreach (var (pattern, confidence) in QuestionPatterns)
+        {
+            if (Regex.IsMatch(normalizedText, pattern, RegexOptions.IgnoreCase))
+            {
+                var questionType = DetermineQuestionType(normalizedText);
+                return (true, confidence, questionType);
+            }
+        }
+
+        return (false, 0, null);
+    }
+
+    private string DetermineQuestionType(string text)
+    {
+        if (Regex.IsMatch(text, @"^what\b")) return "Factual";
+        if (Regex.IsMatch(text, @"^who\b")) return "Person";
+        if (Regex.IsMatch(text, @"^where\b")) return "Location";
+        if (Regex.IsMatch(text, @"^when\b")) return "Time";
+        if (Regex.IsMatch(text, @"^why\b")) return "Reason";
+        if (Regex.IsMatch(text, @"^how\b")) return "Procedural";
+        if (Regex.IsMatch(text, @"^which\b")) return "Choice";
+        if (Regex.IsMatch(text, @"\?$")) return "YesNo";
+        return "General";
     }
 
     private async Task<Speaker> EnsureSpeakerExistsAsync(

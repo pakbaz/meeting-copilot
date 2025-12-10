@@ -1,24 +1,36 @@
 using MeetingCopilot.Contracts.Interfaces;
 using MeetingCopilot.Contracts.Messages;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace MeetingCopilot.Agents;
 
+/// <summary>
+/// Interface for broadcasting agent messages to external systems (e.g., SignalR).
+/// </summary>
+public interface IAgentMessageBroadcaster
+{
+    Task BroadcastAsync(AgentMessage message, CancellationToken cancellationToken = default);
+}
+
 public class AgentOrchestrator : BackgroundService
 {
-    private readonly IEnumerable<IAgent> _agents;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentPriorityQueue _messageQueue;
     private readonly ILogger<AgentOrchestrator> _logger;
+    private readonly IAgentMessageBroadcaster? _broadcaster;
 
     public AgentOrchestrator(
-        IEnumerable<IAgent> agents,
+        IServiceScopeFactory scopeFactory,
         AgentPriorityQueue messageQueue,
-        ILogger<AgentOrchestrator> logger)
+        ILogger<AgentOrchestrator> logger,
+        IAgentMessageBroadcaster? broadcaster = null)
     {
-        _agents = agents;
+        _scopeFactory = scopeFactory;
         _messageQueue = messageQueue;
         _logger = logger;
+        _broadcaster = broadcaster;
     }
 
     public void EnqueueMessage(AgentMessage message)
@@ -29,7 +41,7 @@ public class AgentOrchestrator : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("AgentOrchestrator started with {Count} agents", _agents.Count());
+        _logger.LogInformation("AgentOrchestrator started");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -62,9 +74,13 @@ public class AgentOrchestrator : BackgroundService
 
     private async Task ProcessMessageAsync(AgentMessage message, CancellationToken cancellationToken)
     {
+        // Create a new scope for each message to properly resolve scoped dependencies
+        using var scope = _scopeFactory.CreateScope();
+        var agents = scope.ServiceProvider.GetServices<IAgent>();
+
         var targetAgents = message.TargetAgent != null
-            ? _agents.Where(a => a.Name == message.TargetAgent)
-            : _agents.Where(a => a.CanHandle(message));
+            ? agents.Where(a => a.Name == message.TargetAgent)
+            : agents.Where(a => a.CanHandle(message));
 
         var tasks = new List<Task<List<AgentMessage>>>();
 
@@ -83,12 +99,25 @@ public class AgentOrchestrator : BackgroundService
         // Wait for all agents to complete
         var results = await Task.WhenAll(tasks);
 
-        // Enqueue any new messages produced by agents
+        // Enqueue any new messages produced by agents and broadcast them
         foreach (var newMessages in results)
         {
             foreach (var newMessage in newMessages)
             {
                 EnqueueMessage(newMessage);
+                
+                // Broadcast to external systems (e.g., SignalR)
+                if (_broadcaster != null)
+                {
+                    try
+                    {
+                        await _broadcaster.BroadcastAsync(newMessage, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to broadcast message {MessageId}", newMessage.Id);
+                    }
+                }
             }
         }
     }

@@ -4,10 +4,14 @@
 @inject ILogger<InMeeting> Logger
 @inject SpeechRecognitionService SpeechService
 @inject IHubContext<MeetingHub> HubContext
+@inject MeetingCopilot.Agents.AgentOrchestrator AgentOrchestrator
+@inject SlashCommandService SlashCommandService
 @using Microsoft.AspNetCore.SignalR
 @using Microsoft.AspNetCore.SignalR.Client
 @using meeting_copilot.Services
 @using meeting_copilot.Hubs
+@using MeetingCopilot.Contracts.Messages
+@using MeetingCopilot.Contracts.Events
 @implements IAsyncDisposable
 
 <PageTitle>@(meeting?.Title ?? "Meeting") - Meeting Copilot</PageTitle>
@@ -79,38 +83,6 @@
                             else
                             {
                                 <p class="text-muted small mb-0">Answers to detected questions will appear here...</p>
-                            }
-                        </div>
-                    </div>
-                    
-                    <!-- Live Transcript (middle-left) -->
-                    <div class="transcript-section p-3 border-bottom" style="min-height: 100px;">
-                        <div class="section-header d-flex justify-content-between align-items-start mb-2">
-                            <h6 class="mb-0"><strong>Live Transcript:</strong></h6>
-                            @if (transcriptionResults.Count > 0)
-                            {
-                                <span class="badge bg-success">@transcriptionResults.Count utterances</span>
-                            }
-                        </div>
-                        <div class="transcript-content">
-                            @if (!string.IsNullOrEmpty(currentTranscription))
-                            {
-                                <p class="mb-0"><span class="text-primary">[@(currentSpeaker ?? "Unknown")]</span> @currentTranscription</p>
-                            }
-                            else
-                            {
-                                <p class="text-muted small mb-0">Speech will be transcribed here...</p>
-                            }
-                            @if (transcriptionResults.Count > 0)
-                            {
-                                <div class="small mt-2" style="max-height: 100px; overflow-y: auto;">
-                                    @foreach (var t in transcriptionResults.TakeLast(5))
-                                    {
-                                        <div class="mb-1">
-                                            <span class="text-muted">[@(t.SpeakerId ?? "Unknown")]</span> @t.Text
-                                        </div>
-                                    }
-                                </div>
                             }
                         </div>
                     </div>
@@ -296,7 +268,7 @@
                 .WithAutomaticReconnect()
                 .Build();
 
-            // Subscribe to real-time events from the hub
+            // Subscribe to real-time events from the hub (matching SignalRMessageBroadcaster events)
             hubConnection.On<string, string>("ReceiveTranscription", async (speakerId, text) =>
             {
                 currentSpeaker = speakerId;
@@ -304,39 +276,76 @@
                 await InvokeAsync(StateHasChanged);
             });
 
-            hubConnection.On<string>("ReceiveAnswer", async (answer) =>
+            // Subscribe to UtteranceProcessed from SignalRMessageBroadcaster
+            hubConnection.On<MeetingCopilot.Contracts.Events.TranscriptionEvent>("UtteranceProcessed", async (transcription) =>
             {
-                currentAnswer = answer;
-                hasDetailedAnswer = answer.Length > 200;
+                currentSpeaker = transcription.SpeakerName;
+                currentTranscription = transcription.Content;
                 await InvokeAsync(StateHasChanged);
             });
 
-            hubConnection.On<string>("ReceiveResearch", async (research) =>
+            // Subscribe to AnswerReady from SignalRMessageBroadcaster
+            hubConnection.On<MeetingCopilot.Contracts.Events.AnswerEvent>("AnswerReady", async (answer) =>
             {
-                currentResearch = research;
-                hasDetailedResearch = research.Length > 200;
+                currentAnswer = answer.Answer;
+                hasDetailedAnswer = answer.Answer?.Length > 200;
+                Logger.LogInformation("Received answer for question: {Question}", answer.Question);
                 await InvokeAsync(StateHasChanged);
             });
 
-            hubConnection.On<Insight>("ReceiveKeyPoint", async (keyPoint) =>
+            // Subscribe to ResearchReady from SignalRMessageBroadcaster
+            hubConnection.On<MeetingCopilot.Contracts.Events.ResearchEvent>("ResearchReady", async (research) =>
             {
-                keyPoints.Insert(0, keyPoint);
+                currentResearch = research.Summary;
+                hasDetailedResearch = !string.IsNullOrEmpty(research.Summary) && research.Summary.Length > 200;
+                Logger.LogInformation("Received research for query: {Query}", research.Query);
+                await InvokeAsync(StateHasChanged);
+            });
+
+            // Subscribe to KeyPointsUpdated from SignalRMessageBroadcaster
+            hubConnection.On<MeetingCopilot.Contracts.Events.KeyPointsEvent>("KeyPointsUpdated", async (keyPointsEvent) =>
+            {
+                foreach (var kp in keyPointsEvent.KeyPoints)
+                {
+                    var insight = new Insight
+                    {
+                        Id = kp.Id,
+                        Title = kp.Title,
+                        Content = kp.Content,
+                        PriorityScore = kp.PriorityScore,
+                        Type = InsightType.KeyPoint,
+                        MeetingId = MeetingId,
+                        UserId = "default-user",
+                        CreatedAt = DateTimeOffset.UtcNow
+                    };
+                    keyPoints.Insert(0, insight);
+                }
                 if (keyPoints.Count > 10) keyPoints = keyPoints.Take(10).ToList();
+                Logger.LogInformation("Received {Count} key points", keyPointsEvent.KeyPoints.Count);
                 await InvokeAsync(StateHasChanged);
             });
 
-            hubConnection.On<string, AgendaItemStatus>("AgendaItemUpdated", async (itemId, status) =>
+            hubConnection.On<AgendaItemUpdatedEvent>("AgendaItemUpdated", async (agendaEvent) =>
             {
                 if (meeting?.AgendaItems != null)
                 {
-                    var index = meeting.AgendaItems.FindIndex(a => a.Id == itemId);
+                    var index = meeting.AgendaItems.FindIndex(a => a.Id == agendaEvent.AgendaItemId);
                     if (index >= 0)
                     {
                         var item = meeting.AgendaItems[index];
-                        meeting.AgendaItems[index] = item with { Status = status };
+                        meeting.AgendaItems[index] = item with { Status = agendaEvent.NewStatus };
                         await InvokeAsync(StateHasChanged);
                     }
                 }
+            });
+
+            // Subscribe to QuestionDetected - show "Processing question..." feedback
+            hubConnection.On<MeetingCopilot.Contracts.Events.QuestionDetectedEvent>("QuestionDetected", async (questionEvent) =>
+            {
+                currentAnswer = $"🔍 Processing question: \"{questionEvent.QuestionText}\"...";
+                hasDetailedAnswer = false;
+                Logger.LogInformation("Question detected: {Question}", questionEvent.QuestionText);
+                await InvokeAsync(StateHasChanged);
             });
 
             // Start the connection
@@ -407,6 +416,22 @@
         
         // Broadcast to other clients via SignalR
         await HubContext.Clients.Group(MeetingId).SendAsync("ReceiveTranscription", result.SpeakerId, result.Text);
+        
+        // Send to agent orchestrator for processing (Q&A, key points, research)
+        var utteranceMessage = new UtteranceTranscribedMessage
+        {
+            Id = Guid.NewGuid().ToString(),
+            MeetingId = MeetingId,
+            UserId = "default-user",
+            SourceAgent = "SpeechRecognition",
+            Priority = 10, // High priority for transcription
+            Timestamp = DateTimeOffset.UtcNow,
+            SpeakerId = result.SpeakerId ?? "Unknown",
+            Text = result.Text,
+            Confidence = 1.0 // TranscriptionResult doesn't provide confidence, use 1.0 for final results
+        };
+        
+        AgentOrchestrator.EnqueueMessage(utteranceMessage);
         
         Logger.LogInformation("Transcribed: [{Speaker}] {Text}", result.SpeakerId, result.Text);
         await InvokeAsync(StateHasChanged);
@@ -484,10 +509,70 @@
     {
         Logger.LogInformation("Processing input: {Input}", input);
         
-        // Submit as a question via SignalR
-        if (hubConnection != null)
+        // Check if it's a slash command
+        if (SlashCommandService.IsSlashCommand(input))
         {
-            await hubConnection.InvokeAsync("SubmitQuestion", MeetingId, input);
+            var result = await SlashCommandService.ExecuteAsync(MeetingId, "default-user", input);
+            Logger.LogInformation("Slash command result: {Success} - {Message}", result.Success, result.Message);
+            
+            if (result.Success)
+            {
+                switch (result.Type)
+                {
+                    case SlashCommandService.SlashCommandType.Research:
+                        // Trigger research agent
+                        var researchData = result.Data as dynamic;
+                        var researchMessage = new ResearchRequestedMessage
+                        {
+                            Id = Guid.NewGuid().ToString(),
+                            MeetingId = MeetingId,
+                            UserId = "default-user",
+                            SourceAgent = "User",
+                            Priority = 2,
+                            Timestamp = DateTimeOffset.UtcNow,
+                            Query = input.Substring("/research ".Length).Trim(),
+                            Trigger = ResearchTrigger.Manual
+                        };
+                        AgentOrchestrator.EnqueueMessage(researchMessage);
+                        currentResearch = $"Researching: {researchMessage.Query}...";
+                        break;
+                        
+                    case SlashCommandService.SlashCommandType.Speaker:
+                        // Speaker updated - refresh UI
+                        await InvokeAsync(StateHasChanged);
+                        break;
+                        
+                    case SlashCommandService.SlashCommandType.Help:
+                        // Show help in answer panel
+                        currentAnswer = result.Message;
+                        break;
+                }
+            }
+            else
+            {
+                // Show error/usage in answer panel
+                currentAnswer = result.Message;
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+        else
+        {
+            // Submit as a question - send to agent orchestrator for Q&A
+            var questionMessage = new QuestionDetectedMessage
+            {
+                Id = Guid.NewGuid().ToString(),
+                MeetingId = MeetingId,
+                UserId = "default-user",
+                SourceAgent = "User",
+                Priority = 1, // Highest priority for user questions
+                Timestamp = DateTimeOffset.UtcNow,
+                QuestionText = input,
+                SpeakerId = "user",
+                Confidence = 1.0,
+                UtteranceId = null
+            };
+            AgentOrchestrator.EnqueueMessage(questionMessage);
+            Logger.LogInformation("Submitted user question to agent orchestrator");
         }
     }
 

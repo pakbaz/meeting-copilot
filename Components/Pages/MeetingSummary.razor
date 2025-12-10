@@ -1,5 +1,7 @@
 @page "/meeting/{MeetingId}/summary"
 @rendermode InteractiveServer
+@using MeetingCopilot.Contracts.Entities
+@using MeetingCopilot.Contracts.Interfaces
 @inject NavigationManager Navigation
 @inject ILogger<MeetingSummary> Logger
 
@@ -101,11 +103,14 @@
 @code {
     [Parameter] public string MeetingId { get; set; } = "";
     [Inject] private MeetingService MeetingService { get; set; } = default!;
+    [Inject] private IInteractionRepository InteractionRepository { get; set; } = default!;
+    [Inject] private IInsightRepository InsightRepository { get; set; } = default!;
     
     private Meeting? meeting;
     private List<string> keyTakeaways = new();
     private List<string> actionItems = new();
     private List<string> keyPointsTranscript = new();
+    private List<Interaction> transcriptItems = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -119,27 +124,76 @@
                 return;
             }
             
-            // TODO: Load actual data from insights and session summaries
-            // For now, show placeholder content
-            keyTakeaways = new List<string>
-            {
-                "Meeting summary will be generated here...",
-            };
-            
-            actionItems = new List<string>
-            {
-                "Action items will appear here...",
-            };
-            
-            keyPointsTranscript = new List<string>
-            {
-                "Key points from the transcript will be shown here...",
-            };
+            // Load actual data from Cosmos DB
+            await LoadSummaryDataAsync();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error loading meeting summary for {MeetingId}", MeetingId);
             Navigation.NavigateTo("/meeting/setup");
+        }
+    }
+
+    private async Task LoadSummaryDataAsync()
+    {
+        try
+        {
+            // Load interactions (transcripts)
+            transcriptItems = await InteractionRepository.GetByMeetingIdAsync("default-user", MeetingId);
+            
+            // Load insights (key points, action items)
+            var insights = await InsightRepository.GetByMeetingIdAsync("default-user", MeetingId);
+            
+            // Extract key takeaways from KeyPoint insights
+            keyTakeaways = insights
+                .Where(i => i.Type == InsightType.KeyPoint)
+                .OrderByDescending(i => i.PriorityScore)
+                .Take(10)
+                .Select(i => $"• {i.Title}: {i.Content}")
+                .ToList();
+            
+            if (keyTakeaways.Count == 0)
+            {
+                keyTakeaways.Add("No key takeaways were recorded during this meeting.");
+            }
+            
+            // Extract action items from ActionItem insights
+            actionItems = insights
+                .Where(i => i.Type == InsightType.ActionItem)
+                .OrderBy(i => i.CreatedAt)
+                .Select(i => $"• {i.Title}" + (!string.IsNullOrEmpty(i.OwnerName) ? $" (@{i.OwnerName})" : ""))
+                .ToList();
+            
+            if (actionItems.Count == 0)
+            {
+                actionItems.Add("No action items were identified during this meeting.");
+            }
+            
+            // Build key points transcript from utterances
+            var utterances = transcriptItems
+                .Where(i => i.Type == InteractionType.Utterance)
+                .OrderBy(i => i.Timestamp)
+                .ToList();
+            
+            keyPointsTranscript = utterances
+                .Select(u => $"[{u.SpeakerName ?? "Unknown"}] {u.Content}")
+                .ToList();
+            
+            if (keyPointsTranscript.Count == 0)
+            {
+                keyPointsTranscript.Add("No transcript was recorded during this meeting.");
+            }
+            
+            Logger.LogInformation(
+                "Loaded summary: {Takeaways} takeaways, {Actions} actions, {Utterances} utterances",
+                keyTakeaways.Count, actionItems.Count, keyPointsTranscript.Count);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading summary data for meeting {MeetingId}", MeetingId);
+            keyTakeaways = new List<string> { "Error loading key takeaways." };
+            actionItems = new List<string> { "Error loading action items." };
+            keyPointsTranscript = new List<string> { "Error loading transcript." };
         }
     }
 

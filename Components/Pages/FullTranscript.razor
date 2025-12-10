@@ -1,0 +1,131 @@
+@page "/meeting/{MeetingId}/transcript"
+@rendermode InteractiveServer
+@using MeetingCopilot.Contracts.Entities
+@using MeetingCopilot.Contracts.Interfaces
+@inject NavigationManager Navigation
+@inject ILogger<FullTranscript> Logger
+
+<PageTitle>Full Transcript - Meeting Copilot</PageTitle>
+
+<div class="transcript-container vh-100 p-4 bg-light">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Full Transcript</h2>
+        <button class="btn btn-outline-secondary" @onclick="GoBack">
+            <i class="bi bi-arrow-left"></i> Back to Summary
+        </button>
+    </div>
+    
+    @if (isLoading)
+    {
+        <div class="d-flex justify-content-center align-items-center" style="min-height: 200px;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading transcript...</span>
+            </div>
+        </div>
+    }
+    else if (transcriptItems.Count == 0)
+    {
+        <div class="alert alert-info">
+            <h5>No Transcript Available</h5>
+            <p>No transcription was recorded during this meeting.</p>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-header bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span><strong>@transcriptItems.Count utterances</strong></span>
+                    <span class="text-muted">
+                        @if (transcriptItems.Any())
+                        {
+                            @($"{transcriptItems.Min(t => t.Timestamp):g} - {transcriptItems.Max(t => t.Timestamp):g}")
+                        }
+                    </span>
+                </div>
+            </div>
+            <div class="card-body transcript-body" style="max-height: calc(100vh - 250px); overflow-y: auto;">
+                @foreach (var item in transcriptItems.OrderBy(t => t.Timestamp))
+                {
+                    <div class="transcript-item mb-3 p-2 border-bottom">
+                        <div class="d-flex justify-content-between mb-1">
+                            <strong class="text-primary">@(item.SpeakerName ?? "Unknown Speaker")</strong>
+                            <small class="text-muted">@item.Timestamp.ToString("HH:mm:ss")</small>
+                        </div>
+                        <p class="mb-0">@item.Content</p>
+                        @if (item.Confidence.HasValue && item.Confidence.Value < 0.8)
+                        {
+                            <small class="text-warning">
+                                <i class="bi bi-exclamation-triangle"></i> Low confidence (@item.Confidence.Value.ToString("P0"))
+                            </small>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+        
+        <div class="mt-3 text-center">
+            <button class="btn btn-primary" @onclick="DownloadTranscript">
+                <i class="bi bi-download"></i> Download Transcript
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string MeetingId { get; set; } = "";
+    [Inject] private IInteractionRepository InteractionRepository { get; set; } = default!;
+    
+    private List<Interaction> transcriptItems = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadTranscriptAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading transcript for meeting {MeetingId}", MeetingId);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadTranscriptAsync()
+    {
+        // Load all utterances from Cosmos DB
+        transcriptItems = await InteractionRepository.GetByMeetingIdAsync("default-user", MeetingId);
+        
+        // Filter to only utterances
+        transcriptItems = transcriptItems
+            .Where(i => i.Type == InteractionType.Utterance)
+            .OrderBy(i => i.Timestamp)
+            .ToList();
+        
+        Logger.LogInformation("Loaded {Count} transcript items for meeting {MeetingId}", 
+            transcriptItems.Count, MeetingId);
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo($"/meeting/{MeetingId}/summary");
+    }
+
+    private async Task DownloadTranscript()
+    {
+        // Build transcript text
+        var transcript = string.Join("\n\n", transcriptItems.Select(t =>
+            $"[{t.Timestamp:HH:mm:ss}] {t.SpeakerName ?? "Unknown"}:\n{t.Content}"
+        ));
+        
+        // For now, just copy to clipboard or show in new window
+        // A proper implementation would trigger a file download
+        Logger.LogInformation("Download transcript requested for meeting {MeetingId}", MeetingId);
+        
+        // TODO: Implement actual file download using JS interop
+    }
+}

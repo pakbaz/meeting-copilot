@@ -167,7 +167,19 @@ builder.Services.AddScoped<IInsightRepository>(sp =>
 
 // Agent Infrastructure
 builder.Services.AddSingleton<AgentPriorityQueue>();
-builder.Services.AddHostedService<MeetingCopilot.Agents.AgentOrchestrator>();
+
+// Register the SignalR broadcaster for agent messages
+builder.Services.AddSingleton<MeetingCopilot.Agents.IAgentMessageBroadcaster, SignalRMessageBroadcaster>();
+
+// Register AgentOrchestrator as singleton and hosted service (so it can be injected and runs background processing)
+builder.Services.AddSingleton<MeetingCopilot.Agents.AgentOrchestrator>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MeetingCopilot.Agents.AgentOrchestrator>());
+
+// Register Agents (IAgent implementations)
+builder.Services.AddScoped<IAgent, MeetingCopilot.Agents.TranscriptAgent.TranscriptAgent>();
+builder.Services.AddScoped<IAgent, MeetingCopilot.Agents.AnswerAgent.AnswerAgent>();
+builder.Services.AddScoped<IAgent, MeetingCopilot.Agents.SummaryAgent.SummaryAgent>();
+builder.Services.AddScoped<IAgent, MeetingCopilot.Agents.ResearchAgent.ResearchAgent>();
 
 // Legacy services (will be migrated)
 builder.Services.AddDbContext<MeetingCopilotDbContext>(options =>
@@ -183,6 +195,12 @@ builder.Services.AddScoped<SpeechRecognitionService>();
 // Add Meeting Services
 builder.Services.AddScoped<MeetingService>();
 builder.Services.AddScoped<MicrophoneService>();
+
+// Add new services for US2-US5
+builder.Services.AddSingleton<AudioBufferService>();
+builder.Services.AddScoped<SlashCommandService>();
+builder.Services.AddScoped<SpeakerInferenceService>();
+builder.Services.AddScoped<QuestionDetectionService>();
 
 // Add API Controllers
 builder.Services.AddControllers();

@@ -1,0 +1,136 @@
+@using MeetingCopilot.Contracts.Entities
+
+<div class="research-panel">
+    <div class="panel-header d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0">
+            <i class="bi bi-search"></i> Research
+        </h6>
+        @if (IsResearching)
+        {
+            <span class="badge bg-info">
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                Searching...
+            </span>
+        }
+    </div>
+
+    <div class="research-content">
+        @if (ActiveResearchItems.Count > 0)
+        {
+            <div class="research-items">
+                @foreach (var item in ActiveResearchItems)
+                {
+                    <div class="research-item p-3 border rounded mb-2">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0 text-truncate" style="max-width: 200px;" title="@item.Query">
+                                @item.Query
+                            </h6>
+                            <span class="badge @GetStatusBadgeClass(item.Status)">@item.Status</span>
+                        </div>
+                        
+                        @if (item.Status == ResearchStatus.Completed && item.Results?.Count > 0)
+                        {
+                            <div class="research-results">
+                                @foreach (var result in item.Results.Take(3))
+                                {
+                                    <div class="result-item p-2 bg-light rounded mb-1">
+                                        <div class="d-flex align-items-center mb-1">
+                                            <small class="text-primary text-truncate" style="max-width: 180px;">
+                                                @result.Title
+                                            </small>
+                                        </div>
+                                        <small class="text-muted d-block text-truncate">@result.Snippet</small>
+                                        @if (!string.IsNullOrEmpty(result.Url))
+                                        {
+                                            <a href="@result.Url" target="_blank" class="small">
+                                                <i class="bi bi-box-arrow-up-right"></i> View
+                                            </a>
+                                        }
+                                    </div>
+                                }
+                                @if (item.Results.Count > 3)
+                                {
+                                    <button class="btn btn-link btn-sm p-0" @onclick="() => ShowAllResults(item)">
+                                        +@(item.Results.Count - 3) more results
+                                    </button>
+                                }
+                            </div>
+                        }
+                        else if (item.Status == ResearchStatus.Error)
+                        {
+                            <div class="alert alert-danger py-1 px-2 mb-0">
+                                <small>@item.ErrorMessage</small>
+                            </div>
+                        }
+                        else if (item.Status == ResearchStatus.InProgress)
+                        {
+                            <div class="d-flex align-items-center">
+                                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                                <small class="text-muted">Searching the web...</small>
+                            </div>
+                        }
+                        
+                        <div class="mt-2">
+                            <small class="text-muted">@item.Timestamp.LocalDateTime.ToString("HH:mm:ss")</small>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="text-muted text-center py-4">
+                <i class="bi bi-globe"></i>
+                <p class="mb-0 mt-2">Research results will appear here...</p>
+                <small>Use /research command or mention unfamiliar topics</small>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public List<ResearchItem> ActiveResearchItems { get; set; } = new();
+    [Parameter] public bool IsResearching { get; set; }
+    [Parameter] public EventCallback<ResearchItem> OnShowAllResults { get; set; }
+
+    public enum ResearchStatus
+    {
+        Pending,
+        InProgress,
+        Completed,
+        Error
+    }
+
+    public record ResearchResult(
+        string Title,
+        string Snippet,
+        string? Url,
+        double Relevance
+    );
+
+    public record ResearchItem(
+        string Id,
+        string Query,
+        ResearchStatus Status,
+        List<ResearchResult>? Results,
+        string? ErrorMessage,
+        DateTimeOffset Timestamp
+    );
+
+    private string GetStatusBadgeClass(ResearchStatus status)
+    {
+        return status switch
+        {
+            ResearchStatus.Pending => "bg-secondary",
+            ResearchStatus.InProgress => "bg-info",
+            ResearchStatus.Completed => "bg-success",
+            ResearchStatus.Error => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+
+    private async Task ShowAllResults(ResearchItem item)
+    {
+        await OnShowAllResults.InvokeAsync(item);
+    }
+}

@@ -1,0 +1,155 @@
+@using MeetingCopilot.Contracts.Entities
+
+<div class="detailed-answer-view">
+    @if (Answer != null)
+    {
+        <div class="modal-header">
+            <h5 class="modal-title">Answer Details</h5>
+            <button type="button" class="btn-close" @onclick="OnClose"></button>
+        </div>
+        
+        <div class="modal-body">
+            <div class="question-section mb-4">
+                <h6 class="text-muted mb-2">
+                    <i class="bi bi-question-circle"></i> Question
+                </h6>
+                <div class="p-3 bg-light rounded">
+                    <p class="mb-0">@Answer.QuestionText</p>
+                    @if (!string.IsNullOrEmpty(Answer.QuestionerName))
+                    {
+                        <small class="text-muted">Asked by @Answer.QuestionerName</small>
+                    }
+                </div>
+            </div>
+            
+            <div class="answer-section mb-4">
+                <h6 class="text-muted mb-2">
+                    <i class="bi bi-chat-dots"></i> Answer
+                </h6>
+                <div class="p-3 border rounded">
+                    <p class="mb-2" style="white-space: pre-wrap;">@Answer.AnswerText</p>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="badge @GetConfidenceBadgeClass()">
+                            @GetConfidenceLabel()
+                        </span>
+                        <small class="text-muted">@Answer.Timestamp.LocalDateTime.ToString("f")</small>
+                    </div>
+                </div>
+            </div>
+            
+            @if (Answer.Sources?.Count > 0)
+            {
+                <div class="sources-section mb-4">
+                    <h6 class="text-muted mb-2">
+                        <i class="bi bi-bookmark"></i> Sources
+                    </h6>
+                    <ul class="list-group">
+                        @foreach (var source in Answer.Sources)
+                        {
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span class="text-truncate" style="max-width: 300px;">@source</span>
+                                @if (IsUrl(source))
+                                {
+                                    <a href="@source" target="_blank" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+            
+            @if (!string.IsNullOrEmpty(Answer.RelatedContext))
+            {
+                <div class="context-section">
+                    <h6 class="text-muted mb-2">
+                        <i class="bi bi-file-text"></i> Related Context
+                    </h6>
+                    <div class="p-3 bg-light rounded">
+                        <small style="white-space: pre-wrap;">@Answer.RelatedContext</small>
+                    </div>
+                </div>
+            }
+        </div>
+        
+        <div class="modal-footer">
+            <div class="d-flex justify-content-between w-100">
+                <div>
+                    @if (OnFeedback.HasDelegate)
+                    {
+                        <button class="btn btn-sm btn-outline-success me-2" @onclick="() => SubmitFeedback(true)">
+                            <i class="bi bi-hand-thumbs-up"></i> Helpful
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => SubmitFeedback(false)">
+                            <i class="bi bi-hand-thumbs-down"></i> Not Helpful
+                        </button>
+                    }
+                </div>
+                <button type="button" class="btn btn-secondary" @onclick="OnClose">Close</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="p-4 text-center text-muted">
+            <i class="bi bi-info-circle"></i>
+            <p class="mb-0">No answer selected</p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public DetailedAnswer? Answer { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<FeedbackResult> OnFeedback { get; set; }
+
+    public record DetailedAnswer(
+        string QuestionId,
+        string QuestionText,
+        string? QuestionerName,
+        string AnswerText,
+        double Confidence,
+        List<string>? Sources,
+        string? RelatedContext,
+        DateTimeOffset Timestamp
+    );
+
+    public record FeedbackResult(string QuestionId, bool IsHelpful);
+
+    private string GetConfidenceBadgeClass()
+    {
+        if (Answer == null) return "bg-secondary";
+        return Answer.Confidence switch
+        {
+            >= 0.8 => "bg-success",
+            >= 0.6 => "bg-warning text-dark",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetConfidenceLabel()
+    {
+        if (Answer == null) return "Unknown";
+        return Answer.Confidence switch
+        {
+            >= 0.8 => $"High confidence ({Answer.Confidence:P0})",
+            >= 0.6 => $"Medium confidence ({Answer.Confidence:P0})",
+            _ => $"Low confidence ({Answer.Confidence:P0})"
+        };
+    }
+
+    private bool IsUrl(string text)
+    {
+        return Uri.TryCreate(text, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    private async Task SubmitFeedback(bool isHelpful)
+    {
+        if (Answer != null && OnFeedback.HasDelegate)
+        {
+            await OnFeedback.InvokeAsync(new FeedbackResult(Answer.QuestionId, isHelpful));
+        }
+    }
+}
