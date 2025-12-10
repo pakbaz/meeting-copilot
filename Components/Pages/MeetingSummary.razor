@@ -1,0 +1,155 @@
+@page "/meeting/{MeetingId}/summary"
+@rendermode InteractiveServer
+@inject NavigationManager Navigation
+@inject ILogger<MeetingSummary> Logger
+
+<PageTitle>Meeting Summary - Meeting Copilot</PageTitle>
+
+<div class="summary-container vh-100 p-4">
+    @if (meeting == null)
+    {
+        <div class="d-flex justify-content-center align-items-center h-100">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row h-100">
+            <!-- Left Column: Key Takeaways and Action Items -->
+            <div class="col-6 h-100 d-flex flex-column">
+                
+                <!-- Key Takeaways -->
+                <div class="takeaways-section flex-grow-1 p-3 border mb-3 overflow-auto bg-white">
+                    <h5 class="mb-3"><strong>Key Take aways:</strong></h5>
+                    <div class="takeaways-content">
+                        @if (keyTakeaways.Count > 0)
+                        {
+                            @foreach (var takeaway in keyTakeaways)
+                            {
+                                <p class="mb-2">@takeaway</p>
+                            }
+                        }
+                        else
+                        {
+                            <p class="text-muted">No key takeaways recorded.</p>
+                        }
+                    </div>
+                </div>
+                
+                <!-- Action Items -->
+                <div class="actions-section flex-grow-1 p-3 border overflow-auto bg-white">
+                    <h5 class="mb-3"><strong>Action Items:</strong></h5>
+                    <div class="actions-content">
+                        @if (actionItems.Count > 0)
+                        {
+                            @foreach (var action in actionItems)
+                            {
+                                <p class="mb-2">@action</p>
+                            }
+                        }
+                        else
+                        {
+                            <p class="text-muted">No action items recorded.</p>
+                        }
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Column: Key Points Transcript -->
+            <div class="col-6 h-100">
+                <div class="transcript-section h-100 p-3 border overflow-auto bg-white">
+                    <h5 class="mb-3"><strong>Key points Transcript</strong></h5>
+                    <div class="transcript-content">
+                        @if (keyPointsTranscript.Count > 0)
+                        {
+                            @foreach (var point in keyPointsTranscript)
+                            {
+                                <p class="mb-2">@point</p>
+                            }
+                        }
+                        else
+                        {
+                            <p class="text-muted">No key points transcript available.</p>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom Actions -->
+        <div class="row mt-3">
+            <div class="col-12 text-center">
+                <button class="btn btn-primary me-2" @onclick="StartNewMeeting">
+                    Start New Meeting
+                </button>
+                <button class="btn btn-outline-secondary" @onclick="ViewFullTranscript">
+                    View Full Transcript
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .summary-container {
+        background-color: #f5f5f5;
+    }
+</style>
+
+@code {
+    [Parameter] public string MeetingId { get; set; } = "";
+    [Inject] private MeetingService MeetingService { get; set; } = default!;
+    
+    private Meeting? meeting;
+    private List<string> keyTakeaways = new();
+    private List<string> actionItems = new();
+    private List<string> keyPointsTranscript = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            meeting = await MeetingService.GetMeetingAsync(MeetingId);
+            
+            if (meeting == null)
+            {
+                Navigation.NavigateTo("/meeting/setup");
+                return;
+            }
+            
+            // TODO: Load actual data from insights and session summaries
+            // For now, show placeholder content
+            keyTakeaways = new List<string>
+            {
+                "Meeting summary will be generated here...",
+            };
+            
+            actionItems = new List<string>
+            {
+                "Action items will appear here...",
+            };
+            
+            keyPointsTranscript = new List<string>
+            {
+                "Key points from the transcript will be shown here...",
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading meeting summary for {MeetingId}", MeetingId);
+            Navigation.NavigateTo("/meeting/setup");
+        }
+    }
+
+    private void StartNewMeeting()
+    {
+        Navigation.NavigateTo("/meeting/setup");
+    }
+
+    private void ViewFullTranscript()
+    {
+        Navigation.NavigateTo($"/meeting/{MeetingId}/transcript");
+    }
+}

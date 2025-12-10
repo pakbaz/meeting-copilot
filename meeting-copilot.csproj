@@ -10,14 +10,20 @@
     <UserSecretsId>71453501-0a36-45f6-bc90-094d4ae70460</UserSecretsId>
   </PropertyGroup>
 
-  <!-- Exclude subdirectories from compilation as they are separate projects -->
+  <!-- Exclude subdirectories from compilation and content as they are separate projects -->
   <ItemGroup>
-    <Compile Remove="src/**/*.cs" />
-    <Compile Remove="MeetingCopilot.AppHost/**/*.cs" />
-    <Compile Remove="MeetingCopilot.ServiceDefaults/**/*.cs" />
-    <None Include="src/**/*.cs" />
-    <None Include="MeetingCopilot.AppHost/**/*.cs" />
-    <None Include="MeetingCopilot.ServiceDefaults/**/*.cs" />
+    <Compile Remove="src/**" />
+    <Compile Remove="tests/**" />
+    <Compile Remove="MeetingCopilot.AppHost/**" />
+    <Compile Remove="MeetingCopilot.ServiceDefaults/**" />
+    <Content Remove="src/**" />
+    <Content Remove="tests/**" />
+    <Content Remove="MeetingCopilot.AppHost/**" />
+    <Content Remove="MeetingCopilot.ServiceDefaults/**" />
+    <None Remove="src/**" />
+    <None Remove="tests/**" />
+    <None Remove="MeetingCopilot.AppHost/**" />
+    <None Remove="MeetingCopilot.ServiceDefaults/**" />
   </ItemGroup>
 
   <ItemGroup>

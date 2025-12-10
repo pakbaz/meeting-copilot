@@ -1,134 +1,266 @@
 @page "/meeting/{MeetingId}"
-@using meeting_copilot.Services
-@using MeetingCopilot.Contracts.Entities
+@rendermode InteractiveServer
 @inject NavigationManager Navigation
 @inject ILogger<InMeeting> Logger
+@inject SpeechRecognitionService SpeechService
+@inject IHubContext<MeetingHub> HubContext
+@using Microsoft.AspNetCore.SignalR
+@using Microsoft.AspNetCore.SignalR.Client
+@using meeting_copilot.Services
+@using meeting_copilot.Hubs
+@implements IAsyncDisposable
 
-<PageTitle>Meeting in Progress</PageTitle>
+<PageTitle>@(meeting?.Title ?? "Meeting") - Meeting Copilot</PageTitle>
 
-<div class="meeting-container">
+<div class="meeting-container vh-100 d-flex flex-column">
     @if (meeting == null)
     {
-        <div class="text-center mt-5">
-            <div class="spinner-border" role="status">
-                <span class="visually-hidden">Loading...</span>
+        <div class="d-flex justify-content-center align-items-center h-100">
+            <div class="text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Loading meeting...</p>
             </div>
-            <p class="mt-2">Loading meeting...</p>
         </div>
     }
     else
     {
-        <!-- Top Bar (Phase 12 - US10) -->
-        <div class="meeting-top-bar bg-dark text-white p-3">
-            <div class="container-fluid">
-                <div class="row align-items-center">
-                    <div class="col">
-                        <h4 class="mb-0">@meeting.Title</h4>
-                        <small class="text-muted">Meeting ID: @meeting.Id</small>
+        <!-- Top Bar: Meeting Title | Speaking: Speaker Name / Time | End Meeting -->
+        <header class="meeting-top-bar bg-light border-bottom py-2 px-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="meeting-title d-flex align-items-center gap-2">
+                    <h5 class="mb-0 text-truncate" style="max-width: 300px;">@meeting.Title</h5>
+                    @if (!string.IsNullOrEmpty(transcriptionStatus))
+                    {
+                        <span class="badge @(transcriptionStatus.Contains("error") ? "bg-danger" : transcriptionStatus.Contains("started") ? "bg-success" : "bg-secondary")">
+                            @transcriptionStatus
+                        </span>
+                    }
+                </div>
+                <div class="meeting-status d-flex align-items-center gap-3">
+                    <span class="speaker-indicator">
+                        <strong>Speaking:</strong> @(currentSpeaker ?? "—")
+                    </span>
+                    <span class="separator text-muted">/</span>
+                    <span class="elapsed-time font-monospace">
+                        <strong>Time:</strong> @FormatElapsedTime(elapsedTime)
+                    </span>
+                </div>
+                <div class="meeting-actions">
+                    <button class="btn btn-outline-dark btn-sm" @onclick="HandleEndMeeting">
+                        End Meeting
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area: 2-column layout per wireframe -->
+        <main class="meeting-main flex-grow-1 overflow-hidden">
+            <div class="row g-0 h-100">
+                
+                <!-- LEFT COLUMN: Answer + Key Points -->
+                <div class="col-6 h-100 d-flex flex-column border-end">
+                    
+                    <!-- Answer Panel (top-left) -->
+                    <div class="answer-section flex-grow-1 p-3 border-bottom overflow-auto">
+                        <div class="section-header d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0"><strong>Answer:</strong></h6>
+                            @if (hasDetailedAnswer)
+                            {
+                                <a href="#" class="small text-decoration-none" @onclick="ShowDetailedAnswer" @onclick:preventDefault>(more)</a>
+                            }
+                        </div>
+                        <div class="answer-content">
+                            @if (!string.IsNullOrEmpty(currentAnswer))
+                            {
+                                <p class="mb-0">@currentAnswer</p>
+                            }
+                            else
+                            {
+                                <p class="text-muted small mb-0">Answers to detected questions will appear here...</p>
+                            }
+                        </div>
                     </div>
-                    <div class="col-auto">
-                        <button class="btn btn-danger" @onclick="HandleEndMeeting">
-                            <i class="bi bi-stop-fill"></i> End Meeting
-                        </button>
+                    
+                    <!-- Live Transcript (middle-left) -->
+                    <div class="transcript-section p-3 border-bottom" style="min-height: 100px;">
+                        <div class="section-header d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0"><strong>Live Transcript:</strong></h6>
+                            @if (transcriptionResults.Count > 0)
+                            {
+                                <span class="badge bg-success">@transcriptionResults.Count utterances</span>
+                            }
+                        </div>
+                        <div class="transcript-content">
+                            @if (!string.IsNullOrEmpty(currentTranscription))
+                            {
+                                <p class="mb-0"><span class="text-primary">[@(currentSpeaker ?? "Unknown")]</span> @currentTranscription</p>
+                            }
+                            else
+                            {
+                                <p class="text-muted small mb-0">Speech will be transcribed here...</p>
+                            }
+                            @if (transcriptionResults.Count > 0)
+                            {
+                                <div class="small mt-2" style="max-height: 100px; overflow-y: auto;">
+                                    @foreach (var t in transcriptionResults.TakeLast(5))
+                                    {
+                                        <div class="mb-1">
+                                            <span class="text-muted">[@(t.SpeakerId ?? "Unknown")]</span> @t.Text
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                    
+                    <!-- Key Points Panel (bottom-left) -->
+                    <div class="keypoints-section flex-grow-1 p-3 overflow-auto">
+                        <h6 class="mb-2"><strong>Key points:</strong></h6>
+                        <ul class="list-unstyled mb-0">
+                            @if (keyPoints.Count > 0)
+                            {
+                                @foreach (var point in keyPoints.Take(5))
+                                {
+                                    <li class="mb-2 d-flex justify-content-between align-items-start">
+                                        <span>- @point.Title</span>
+                                        <a href="#" class="small text-decoration-none ms-2" @onclick="() => ShowKeyPointDetail(point)" @onclick:preventDefault>(more)</a>
+                                    </li>
+                                }
+                            }
+                            else
+                            {
+                                <li class="text-muted small">- Key points will appear here...</li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- RIGHT COLUMN: Research & Next topic + Summary and Agenda -->
+                <div class="col-6 h-100 d-flex flex-column">
+                    
+                    <!-- Research Panel (top-right) -->
+                    <div class="research-section flex-grow-1 p-3 border-bottom overflow-auto">
+                        <div class="section-header d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="mb-0"><strong>Research & Next topic:</strong></h6>
+                            @if (hasDetailedResearch)
+                            {
+                                <a href="#" class="small text-decoration-none" @onclick="ShowDetailedResearch" @onclick:preventDefault>(more)</a>
+                            }
+                        </div>
+                        <div class="research-content">
+                            @if (!string.IsNullOrEmpty(currentResearch))
+                            {
+                                <p class="mb-0">@currentResearch</p>
+                            }
+                            else
+                            {
+                                <p class="text-muted small mb-0">Research results will appear here...</p>
+                            }
+                        </div>
+                    </div>
+                    
+                    <!-- Summary and Agenda Panel (bottom-right) -->
+                    <div class="summary-section flex-grow-1 p-3 overflow-auto">
+                        <h6 class="mb-2"><strong>Summary and Agenda:</strong></h6>
+                        <ul class="list-unstyled mb-0">
+                            @if (meeting.AgendaItems?.Count > 0)
+                            {
+                                @foreach (var item in meeting.AgendaItems)
+                                {
+                                    <li class="mb-2 d-flex justify-content-between align-items-start">
+                                        <span>
+                                            [@(item.Status == AgendaItemStatus.Completed ? "x" : " ")] 
+                                            @item.Title
+                                        </span>
+                                        <a href="#" class="small text-decoration-none ms-2" @onclick="() => ShowAgendaDetail(item)" @onclick:preventDefault>(more)</a>
+                                    </li>
+                                }
+                            }
+                            else
+                            {
+                                <li class="text-muted small">[ ] No agenda items defined</li>
+                            }
+                        </ul>
                     </div>
                 </div>
             </div>
-        </div>
+        </main>
 
-        <!-- Main Meeting Area -->
-        <div class="container-fluid mt-3">
-            <div class="row">
-                <!-- Left Panel: Transcript (Phase 4 - US2) -->
-                <div class="col-md-4">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="bi bi-mic"></i> Transcript</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted">Transcription will appear here...</p>
-                            <!-- TranscriptPanel will go here -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Middle Panel: Q&A and Key Points -->
-                <div class="col-md-4">
-                    <!-- Answer Panel (Phase 5 - US3) -->
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="bi bi-question-circle"></i> Answers</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted">AI answers will appear here...</p>
-                            <!-- AnswerPanel will go here -->
-                        </div>
-                    </div>
-
-                    <!-- Key Points Panel (Phase 6 - US4) -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="bi bi-star"></i> Key Points</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted">Key points will appear here...</p>
-                            <!-- KeyPointsPanel will go here -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Right Panel: Research and Summary -->
-                <div class="col-md-4">
-                    <!-- Research Panel (Phase 7 - US5) -->
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="bi bi-search"></i> Research</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted">Research results will appear here...</p>
-                            <!-- ResearchPanel will go here -->
-                        </div>
-                    </div>
-
-                    <!-- Summary Panel (Phase 8 - US6) -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="bi bi-list-check"></i> Summary</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted">Meeting summary will appear here...</p>
-                            <!-- SummaryPanel will go here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Bottom: Input Area (Phase 11 - US9) -->
-            <div class="row mt-3">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-body">
-                            <input type="text" 
-                                   class="form-control" 
-                                   placeholder="Type a command (e.g., /speaker John, /research topic)..." />
-                            <!-- CollapsedInputArea will go here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <!-- Bottom: Collapsed Input Area -->
+        <footer class="meeting-input-area border-top p-2">
+            <input type="text" 
+                   class="form-control" 
+                   placeholder="Input..."
+                   @bind="inputText"
+                   @bind:event="oninput"
+                   @onkeydown="HandleInputKeyDown" />
+        </footer>
     }
 </div>
+
+<style>
+    .meeting-container {
+        background-color: #fafafa;
+    }
+    
+    .meeting-top-bar {
+        min-height: 50px;
+    }
+    
+    .meeting-main {
+        min-height: 0;
+    }
+    
+    .answer-section,
+    .keypoints-section,
+    .research-section,
+    .summary-section {
+        min-height: 150px;
+    }
+    
+    .section-header h6 {
+        font-size: 0.95rem;
+    }
+    
+    .meeting-input-area input {
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+    
+    .font-monospace {
+        font-family: 'Courier New', monospace;
+    }
+</style>
 
 @code {
     [Parameter] public string MeetingId { get; set; } = "";
     [Inject] private MeetingService MeetingService { get; set; } = default!;
     
     private Meeting? meeting;
-    private string? errorMessage;
+    private string? currentSpeaker;
+    private TimeSpan elapsedTime = TimeSpan.Zero;
+    private string? currentAnswer;
+    private bool hasDetailedAnswer = false;
+    private string? currentResearch;
+    private bool hasDetailedResearch = false;
+    private List<Insight> keyPoints = new();
+    private string inputText = "";
+    private System.Threading.Timer? timer;
+    private HubConnection? hubConnection;
+    private CancellationTokenSource? transcriptionCts;
+    private List<TranscriptionResult> transcriptionResults = new();
+    private bool isTranscribing = false;
+    private string? currentTranscription;
+    private string? transcriptionStatus;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadMeetingAsync();
+        await InitializeSignalRAsync();
+        StartElapsedTimeTimer();
+        await StartTranscriptionAsync();
     }
 
     private async Task LoadMeetingAsync()
@@ -139,28 +271,250 @@
             
             if (meeting == null)
             {
-                errorMessage = "Meeting not found";
-                Navigation.NavigateTo("/");
+                Navigation.NavigateTo("/meeting/setup");
+            }
+            else
+            {
+                Logger.LogInformation("Loaded meeting: {Title} with {AgendaCount} agenda items", 
+                    meeting.Title, meeting.AgendaItems?.Count ?? 0);
             }
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error loading meeting {MeetingId}", MeetingId);
-            errorMessage = "Error loading meeting";
+            Navigation.NavigateTo("/meeting/setup");
         }
+    }
+
+    private async Task InitializeSignalRAsync()
+    {
+        try
+        {
+            // Build the hub connection
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/hubs/meeting"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            // Subscribe to real-time events from the hub
+            hubConnection.On<string, string>("ReceiveTranscription", async (speakerId, text) =>
+            {
+                currentSpeaker = speakerId;
+                currentTranscription = text;
+                await InvokeAsync(StateHasChanged);
+            });
+
+            hubConnection.On<string>("ReceiveAnswer", async (answer) =>
+            {
+                currentAnswer = answer;
+                hasDetailedAnswer = answer.Length > 200;
+                await InvokeAsync(StateHasChanged);
+            });
+
+            hubConnection.On<string>("ReceiveResearch", async (research) =>
+            {
+                currentResearch = research;
+                hasDetailedResearch = research.Length > 200;
+                await InvokeAsync(StateHasChanged);
+            });
+
+            hubConnection.On<Insight>("ReceiveKeyPoint", async (keyPoint) =>
+            {
+                keyPoints.Insert(0, keyPoint);
+                if (keyPoints.Count > 10) keyPoints = keyPoints.Take(10).ToList();
+                await InvokeAsync(StateHasChanged);
+            });
+
+            hubConnection.On<string, AgendaItemStatus>("AgendaItemUpdated", async (itemId, status) =>
+            {
+                if (meeting?.AgendaItems != null)
+                {
+                    var index = meeting.AgendaItems.FindIndex(a => a.Id == itemId);
+                    if (index >= 0)
+                    {
+                        var item = meeting.AgendaItems[index];
+                        meeting.AgendaItems[index] = item with { Status = status };
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+            });
+
+            // Start the connection
+            await hubConnection.StartAsync();
+            Logger.LogInformation("SignalR hub connection started");
+
+            // Join the meeting group
+            await hubConnection.InvokeAsync("JoinMeeting", MeetingId);
+            Logger.LogInformation("Joined meeting group: {MeetingId}", MeetingId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error initializing SignalR connection");
+        }
+    }
+
+    private async Task StartTranscriptionAsync()
+    {
+        try
+        {
+            // Subscribe to speech recognition events
+            SpeechService.OnTranscribing += HandleTranscribing;
+            SpeechService.OnTranscribed += HandleTranscribed;
+            SpeechService.OnError += HandleTranscriptionError;
+            SpeechService.OnStatus += HandleTranscriptionStatus;
+
+            transcriptionCts = new CancellationTokenSource();
+            isTranscribing = true;
+
+            Logger.LogInformation("Starting transcription for meeting {MeetingId}", MeetingId);
+            
+            // Start transcription in background
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await SpeechService.RecognizeFromMicrophoneAsync(transcriptionCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Logger.LogInformation("Transcription cancelled");
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Transcription error");
+                }
+            });
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error starting transcription");
+        }
+    }
+
+    private async void HandleTranscribing(object? sender, TranscriptionResult result)
+    {
+        currentSpeaker = result.SpeakerId;
+        currentTranscription = result.Text;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void HandleTranscribed(object? sender, TranscriptionResult result)
+    {
+        currentSpeaker = result.SpeakerId;
+        transcriptionResults.Add(result);
+        
+        // Broadcast to other clients via SignalR
+        await HubContext.Clients.Group(MeetingId).SendAsync("ReceiveTranscription", result.SpeakerId, result.Text);
+        
+        Logger.LogInformation("Transcribed: [{Speaker}] {Text}", result.SpeakerId, result.Text);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void HandleTranscriptionError(object? sender, string error)
+    {
+        Logger.LogError("Transcription error: {Error}", error);
+        transcriptionStatus = $"error: {error}";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void HandleTranscriptionStatus(object? sender, string status)
+    {
+        Logger.LogInformation("Transcription status: {Status}", status);
+        transcriptionStatus = status;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void StartElapsedTimeTimer()
+    {
+        timer = new System.Threading.Timer(async _ =>
+        {
+            if (meeting?.StartedAt != null)
+            {
+                elapsedTime = DateTime.UtcNow - meeting.StartedAt.Value;
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private string FormatElapsedTime(TimeSpan time)
+    {
+        if (time.TotalHours >= 1)
+        {
+            return $"{(int)time.TotalHours}:{time.Minutes:D2}:{time.Seconds:D2}";
+        }
+        return $"{time.Minutes:D2}:{time.Seconds:D2}";
     }
 
     private async Task HandleEndMeeting()
     {
-        // TODO: Confirmation dialog
         try
         {
+            // Stop transcription
+            transcriptionCts?.Cancel();
+            await SpeechService.StopRecognitionAsync();
+            isTranscribing = false;
+
+            // Leave the meeting group
+            if (hubConnection != null)
+            {
+                await hubConnection.InvokeAsync("LeaveMeeting", MeetingId);
+            }
+
             await MeetingService.EndMeetingAsync(MeetingId);
             Navigation.NavigateTo($"/meeting/{MeetingId}/summary");
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error ending meeting {MeetingId}", MeetingId);
+        }
+    }
+
+    private async Task HandleInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(inputText))
+        {
+            await ProcessInput(inputText);
+            inputText = "";
+        }
+    }
+
+    private async Task ProcessInput(string input)
+    {
+        Logger.LogInformation("Processing input: {Input}", input);
+        
+        // Submit as a question via SignalR
+        if (hubConnection != null)
+        {
+            await hubConnection.InvokeAsync("SubmitQuestion", MeetingId, input);
+        }
+    }
+
+    private void ShowDetailedAnswer() { }
+    private void ShowDetailedResearch() { }
+    private void ShowKeyPointDetail(Insight point) { }
+    private void ShowAgendaDetail(AgendaItem item) { }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Unsubscribe from events
+        SpeechService.OnTranscribing -= HandleTranscribing;
+        SpeechService.OnTranscribed -= HandleTranscribed;
+        SpeechService.OnError -= HandleTranscriptionError;
+        SpeechService.OnStatus -= HandleTranscriptionStatus;
+
+        // Cancel transcription
+        transcriptionCts?.Cancel();
+        transcriptionCts?.Dispose();
+
+        // Dispose timer
+        timer?.Dispose();
+
+        // Close SignalR connection
+        if (hubConnection != null)
+        {
+            await hubConnection.DisposeAsync();
         }
     }
 }

@@ -8,20 +8,23 @@ public class CosmosContainerInitializer
     private readonly CosmosClient _cosmosClient;
     private readonly string _databaseName;
     private readonly ILogger<CosmosContainerInitializer> _logger;
+    private readonly bool _useVectorIndexing;
 
     public CosmosContainerInitializer(
         CosmosClient cosmosClient,
         string databaseName,
-        ILogger<CosmosContainerInitializer> logger)
+        ILogger<CosmosContainerInitializer> logger,
+        bool useVectorIndexing = false)
     {
         _cosmosClient = cosmosClient;
         _databaseName = databaseName;
         _logger = logger;
+        _useVectorIndexing = useVectorIndexing;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Initializing Cosmos DB containers");
+        _logger.LogInformation("Initializing Cosmos DB containers (VectorIndexing: {UseVectorIndexing})", _useVectorIndexing);
 
         // Create database if not exists
         var database = await _cosmosClient.CreateDatabaseIfNotExistsAsync(_databaseName, cancellationToken: cancellationToken);
@@ -73,8 +76,13 @@ public class CosmosContainerInitializer
         var containerProperties = new ContainerProperties
         {
             Id = "interactions",
-            PartitionKeyPath = "/userId",
-            VectorEmbeddingPolicy = new VectorEmbeddingPolicy(
+            PartitionKeyPath = "/userId"
+        };
+
+        // Only add vector indexing if supported (not supported in vNext preview emulator)
+        if (_useVectorIndexing)
+        {
+            containerProperties.VectorEmbeddingPolicy = new VectorEmbeddingPolicy(
                 new System.Collections.ObjectModel.Collection<Embedding>
                 {
                     new()
@@ -84,18 +92,20 @@ public class CosmosContainerInitializer
                         DistanceFunction = DistanceFunction.Cosine,
                         Dimensions = 1536
                     }
-                })
-        };
+                });
 
-        // Configure indexing policy for vector search
-        containerProperties.IndexingPolicy.VectorIndexes.Add(new VectorIndexPath
-        {
-            Path = "/contentVector",
-            Type = VectorIndexType.QuantizedFlat
-        });
+            // Configure indexing policy for vector search
+            containerProperties.IndexingPolicy.VectorIndexes.Add(new VectorIndexPath
+            {
+                Path = "/contentVector",
+                Type = VectorIndexType.QuantizedFlat
+            });
+            
+            _logger.LogInformation("Container 'interactions' configured with vector indexing");
+        }
 
         await database.CreateContainerIfNotExistsAsync(containerProperties, 400, cancellationToken: cancellationToken);
-        _logger.LogInformation("Container 'interactions' ready with vector indexing");
+        _logger.LogInformation("Container 'interactions' ready");
     }
 
     private async Task CreateInsightsContainerAsync(Database database, CancellationToken cancellationToken)
@@ -103,8 +113,13 @@ public class CosmosContainerInitializer
         var containerProperties = new ContainerProperties
         {
             Id = "insights",
-            PartitionKeyPath = "/userId",
-            VectorEmbeddingPolicy = new VectorEmbeddingPolicy(
+            PartitionKeyPath = "/userId"
+        };
+
+        // Only add vector indexing if supported (not supported in vNext preview emulator)
+        if (_useVectorIndexing)
+        {
+            containerProperties.VectorEmbeddingPolicy = new VectorEmbeddingPolicy(
                 new System.Collections.ObjectModel.Collection<Embedding>
                 {
                     new()
@@ -114,18 +129,20 @@ public class CosmosContainerInitializer
                         DistanceFunction = DistanceFunction.Cosine,
                         Dimensions = 1536
                     }
-                })
-        };
+                });
 
-        // Configure indexing policy for vector search
-        containerProperties.IndexingPolicy.VectorIndexes.Add(new VectorIndexPath
-        {
-            Path = "/embedding",
-            Type = VectorIndexType.QuantizedFlat
-        });
+            // Configure indexing policy for vector search
+            containerProperties.IndexingPolicy.VectorIndexes.Add(new VectorIndexPath
+            {
+                Path = "/embedding",
+                Type = VectorIndexType.QuantizedFlat
+            });
+            
+            _logger.LogInformation("Container 'insights' configured with vector indexing");
+        }
 
         await database.CreateContainerIfNotExistsAsync(containerProperties, 400, cancellationToken: cancellationToken);
-        _logger.LogInformation("Container 'insights' ready with vector indexing");
+        _logger.LogInformation("Container 'insights' ready");
     }
 
     private async Task CreateSessionSummariesContainerAsync(Database database, CancellationToken cancellationToken)

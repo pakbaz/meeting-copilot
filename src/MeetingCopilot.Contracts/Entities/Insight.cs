@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MeetingCopilot.Contracts.Entities;
 
 public record Insight
@@ -33,7 +35,8 @@ public record Insight
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
     
-    // TTL (action items exempt from TTL)
+    // TTL (action items exempt from TTL, omit from JSON when null to avoid Cosmos DB BadRequest)
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Ttl { get; init; }
 }
 

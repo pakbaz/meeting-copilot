@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MeetingCopilot.Contracts.Entities;
 
 public record Interaction
@@ -31,7 +33,8 @@ public record Interaction
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow; // When spoken/generated
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow; // When stored
     
-    // TTL
+    // TTL (omit from JSON when null to avoid Cosmos DB BadRequest)
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Ttl { get; init; } // Set to 7776000 on meeting archive
 }
 

@@ -114,6 +114,27 @@ window.MicrophonePermissions = {
                "2. Click it and select 'Allow'\n" +
                "3. If no icon appears, check your browser's privacy settings\n" +
                "4. Make sure you're using HTTPS (not HTTP)";
+    },
+
+    /**
+     * Enumerate available audio input devices
+     */
+    async enumerateAudioDevices() {
+        try {
+            console.log('🎤 Enumerating audio devices...');
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter(d => d.kind === 'audioinput');
+            console.log(`🎤 Found ${audioInputs.length} audio input devices`);
+            return audioInputs.map(d => ({
+                deviceId: d.deviceId,
+                kind: d.kind,
+                label: d.label,
+                groupId: d.groupId
+            }));
+        } catch (error) {
+            console.error('🎤 Error enumerating devices:', error);
+            return [];
+        }
     }
 };
 

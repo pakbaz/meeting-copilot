@@ -1,117 +1,106 @@
 @page "/meeting/setup"
-@using meeting_copilot.Services
-@using MeetingCopilot.Contracts.Entities
-@using System.Net.Http.Json
+@rendermode InteractiveServer
 @inject NavigationManager Navigation
-@inject HttpClient Http
 @inject ILogger<PreMeetingSetup> Logger
+@using MeetingCopilot.Contracts.Entities
+@using meeting_copilot.Services
 
-<PageTitle>Pre-Meeting Setup</PageTitle>
+<PageTitle>Pre-Meeting Setup - Meeting Copilot</PageTitle>
 
-<div class="container mt-4">
-    <div class="row justify-content-center">
-        <div class="col-md-8 col-lg-6">
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="mb-0">Setup Your Meeting</h3>
-                </div>
-                <div class="card-body">
-                    <EditForm Model="@setupModel" OnValidSubmit="HandleStartMeeting">
-                        <DataAnnotationsValidator />
-                        <ValidationSummary class="text-danger" />
+<div class="pre-meeting-container d-flex justify-content-center align-items-center vh-100">
+    <div class="setup-card" style="width: 500px; max-width: 90%;">
+        <div class="card border">
+            <div class="card-body p-4">
+                <EditForm Model="@setupModel" OnValidSubmit="HandleStartMeeting">
+                    <DataAnnotationsValidator />
 
-                        <!-- Meeting Title -->
-                        <div class="mb-3">
-                            <label for="title" class="form-label">Meeting Title *</label>
-                            <InputText id="title" 
+                    <!-- Meeting Context Area (Title, Agenda, Attendees, Goals) -->
+                    <div class="mb-4">
+                        <InputTextArea id="context" 
                                       class="form-control" 
-                                      @bind-Value="setupModel.Title" 
-                                      placeholder="Enter meeting title" />
-                        </div>
+                                      @bind-Value="setupModel.Context" 
+                                      rows="10"
+                                      placeholder="Meeting Title, Agenda, Attendees, Goals and any relevant Context...." 
+                                      style="resize: none; border: 1px solid #ccc;" />
+                    </div>
 
-                        <!-- Meeting Description -->
-                        <div class="mb-3">
-                            <label for="description" class="form-label">Description (Optional)</label>
-                            <InputTextArea id="description" 
-                                          class="form-control" 
-                                          @bind-Value="setupModel.Description" 
-                                          rows="3"
-                                          placeholder="Add any context or notes..." />
-                        </div>
+                    <!-- Microphone Selector -->
+                    <div class="mb-4">
+                        <MicrophoneSelector SelectedDeviceId="@setupModel.MicrophoneDeviceId" 
+                                          SelectedDeviceIdChanged="@OnMicrophoneDeviceChanged" />
+                    </div>
 
-                        <!-- Microphone Selector -->
-                        <div class="mb-3">
-                            <MicrophoneSelector SelectedDeviceId="@setupModel.MicrophoneDeviceId" 
-                                              SelectedDeviceIdChanged="@OnMicrophoneDeviceChanged" />
+                    <!-- Error Message -->
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger py-2" role="alert">
+                            @errorMessage
                         </div>
+                    }
 
-                        <!-- Agenda Editor -->
-                        <div class="mb-3">
-                            <AgendaEditor AgendaItems="@setupModel.AgendaItems" 
-                                        AgendaItemsChanged="@OnAgendaItemsChanged" />
-                        </div>
-
-                        <!-- Attachment Uploader -->
-                        <div class="mb-3">
-                            <AttachmentUploader Attachments="@setupModel.Attachments" 
-                                              AttachmentsChanged="@OnAttachmentsChanged" />
-                        </div>
-
-                        <!-- Language Selection -->
-                        <div class="mb-3">
-                            <label for="language" class="form-label">Language</label>
-                            <InputSelect id="language" class="form-select" @bind-Value="setupModel.Language">
-                                <option value="en-US">English (US)</option>
-                                <option value="en-GB">English (UK)</option>
-                                <option value="es-ES">Spanish</option>
-                                <option value="fr-FR">French</option>
-                                <option value="de-DE">German</option>
-                                <option value="ja-JP">Japanese</option>
-                                <option value="zh-CN">Chinese (Simplified)</option>
-                            </InputSelect>
-                        </div>
-
-                        <!-- Error Message -->
-                        @if (!string.IsNullOrEmpty(errorMessage))
-                        {
-                            <div class="alert alert-danger" role="alert">
-                                @errorMessage
-                            </div>
-                        }
-
-                        <!-- Action Buttons -->
-                        <div class="d-flex justify-content-between mt-4">
-                            <button type="button" 
-                                    class="btn btn-outline-secondary"
-                                    @onclick="HandleCancel">
-                                Cancel
-                            </button>
-                            <button type="submit" 
-                                    class="btn btn-primary"
-                                    disabled="@isSubmitting">
-                                @if (isSubmitting)
-                                {
-                                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                                    <span>Starting...</span>
-                                }
-                                else
-                                {
-                                    <i class="bi bi-play-fill me-2"></i>
-                                    <span>Start Meeting</span>
-                                }
-                            </button>
-                        </div>
-                    </EditForm>
-                </div>
+                    <!-- Start Meeting Button -->
+                    <div class="d-grid">
+                        <button type="submit" 
+                                class="btn btn-dark btn-lg"
+                                disabled="@isSubmitting">
+                            @if (isSubmitting)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                <span>Starting...</span>
+                            }
+                            else
+                            {
+                                <span>Start Meeting</span>
+                            }
+                        </button>
+                    </div>
+                </EditForm>
             </div>
         </div>
     </div>
 </div>
 
+<style>
+    .pre-meeting-container {
+        background-color: #f5f5f5;
+    }
+    
+    .setup-card .form-control:focus {
+        border-color: #333;
+        box-shadow: none;
+    }
+</style>
+
 @code {
     private PreMeetingSetupModel setupModel = new();
     private bool isSubmitting = false;
     private string? errorMessage;
+
+    [Inject] private MeetingService MeetingService { get; set; } = default!;
+    [Inject] private MeetingContextExtractor? ContextExtractor { get; set; }
+
+    protected override void OnInitialized()
+    {
+        // Pre-populate with sample data for testing
+        setupModel.Context = @"Weekly Product Sync Meeting
+
+## Attendees
+- John Smith (Product Manager)
+- Sarah Johnson (Engineering Lead)
+- Mike Chen (Designer)
+
+## Agenda
+1. Review last week's action items
+2. Discuss Q1 roadmap progress
+3. Demo new feature mockups
+4. Sprint planning for next week
+5. Open discussion / Q&A
+
+## Goals
+- Align on Q1 priorities
+- Get feedback on new designs
+- Assign owners for upcoming tasks";
+    }
 
     private async Task HandleStartMeeting()
     {
@@ -120,38 +109,51 @@
 
         try
         {
-            // Create meeting via API
-            var request = new
-            {
-                setupModel.Title,
-                setupModel.Description,
-                setupModel.AgendaItems,
-                setupModel.Attachments,
-                setupModel.MicrophoneDeviceId,
-                setupModel.Language
-            };
+            string title;
+            string description;
+            List<AgendaItem> agendaItems;
 
-            var response = await Http.PostAsJsonAsync("/api/meetings", request);
-            
-            if (response.IsSuccessStatusCode)
+            // Use LLM extraction if available, otherwise fall back to regex parsing
+            if (ContextExtractor != null && !string.IsNullOrWhiteSpace(setupModel.Context))
             {
-                var meeting = await response.Content.ReadFromJsonAsync<Meeting>();
+                Logger.LogInformation("Using LLM to extract meeting details...");
+                var extracted = await ContextExtractor.ExtractMeetingDetailsAsync(setupModel.Context);
                 
-                if (meeting != null)
+                title = extracted.Title;
+                description = extracted.Description ?? setupModel.Context ?? "";
+                agendaItems = extracted.AgendaItems.Select((item, index) => new AgendaItem
                 {
-                    // Start the meeting
-                    var startResponse = await Http.PostAsync($"/api/meetings/{meeting.Id}/start", null);
-                    
-                    if (startResponse.IsSuccessStatusCode)
-                    {
-                        // Navigate to in-meeting view
-                        Navigation.NavigateTo($"/meeting/{meeting.Id}");
-                    }
-                    else
-                    {
-                        errorMessage = "Failed to start meeting. Please try again.";
-                    }
-                }
+                    Id = Guid.NewGuid().ToString(),
+                    Title = item,
+                    Order = index + 1,
+                    Status = AgendaItemStatus.Pending
+                }).ToList();
+
+                Logger.LogInformation("LLM extracted: Title='{Title}', {Count} agenda items", title, agendaItems.Count);
+            }
+            else
+            {
+                // Fallback to regex-based parsing
+                (title, description, agendaItems) = ParseMeetingContext(setupModel.Context);
+            }
+
+            // Create meeting (using default user for MVP single-user mode)
+            var meeting = await MeetingService.CreateMeetingAsync(
+                userId: "default-user",
+                title: title,
+                description: description,
+                agendaItems: agendaItems,
+                microphoneDeviceId: setupModel.MicrophoneDeviceId,
+                language: "en-US"
+            );
+
+            if (meeting != null)
+            {
+                // Start the meeting
+                await MeetingService.StartMeetingAsync(meeting.Id);
+                
+                // Navigate to in-meeting view
+                Navigation.NavigateTo($"/meeting/{meeting.Id}");
             }
             else
             {
@@ -169,9 +171,93 @@
         }
     }
 
-    private void HandleCancel()
+    private (string title, string description, List<AgendaItem> agendaItems) ParseMeetingContext(string? context)
     {
-        Navigation.NavigateTo("/");
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return ("Untitled Meeting", "", new List<AgendaItem>());
+        }
+
+        var lines = context.Split('\n');
+        var title = "Untitled Meeting";
+        var descriptionLines = new List<string>();
+        var agendaItems = new List<AgendaItem>();
+        var inAgendaSection = false;
+        var order = 0;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            
+            // First non-empty line is the title
+            if (title == "Untitled Meeting" && !string.IsNullOrWhiteSpace(line) && !line.StartsWith("#"))
+            {
+                title = line;
+                continue;
+            }
+
+            // Check for agenda section header
+            if (line.StartsWith("## Agenda") || line.StartsWith("# Agenda") || 
+                line.ToLower().Contains("agenda:") || line.ToLower() == "agenda")
+            {
+                inAgendaSection = true;
+                continue;
+            }
+
+            // Check for other section headers (end of agenda section)
+            if (inAgendaSection && (line.StartsWith("## ") || line.StartsWith("# ")))
+            {
+                inAgendaSection = false;
+            }
+
+            // Parse agenda items
+            if (inAgendaSection && !string.IsNullOrWhiteSpace(line))
+            {
+                // Match numbered items like "1. Item" or "1) Item" or bullet points "- Item" or "* Item"
+                var agendaMatch = System.Text.RegularExpressions.Regex.Match(line, @"^(?:\d+[\.\)]\s*|[-*]\s*)(.+)$");
+                if (agendaMatch.Success)
+                {
+                    order++;
+                    agendaItems.Add(new AgendaItem
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Title = agendaMatch.Groups[1].Value.Trim(),
+                        Order = order,
+                        Status = AgendaItemStatus.Pending
+                    });
+                    continue;
+                }
+            }
+
+            // Add to description
+            descriptionLines.Add(rawLine);
+        }
+
+        var description = string.Join("\n", descriptionLines).Trim();
+        
+        // If no agenda items were parsed, try to infer from numbered lines anywhere
+        if (agendaItems.Count == 0)
+        {
+            order = 0;
+            foreach (var rawLine in lines)
+            {
+                var line = rawLine.Trim();
+                var numberedMatch = System.Text.RegularExpressions.Regex.Match(line, @"^(\d+)[\.\)]\s+(.+)$");
+                if (numberedMatch.Success)
+                {
+                    order++;
+                    agendaItems.Add(new AgendaItem
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Title = numberedMatch.Groups[2].Value.Trim(),
+                        Order = order,
+                        Status = AgendaItemStatus.Pending
+                    });
+                }
+            }
+        }
+
+        return (title, description, agendaItems);
     }
 
     private void OnMicrophoneDeviceChanged(string? deviceId)
@@ -179,23 +265,9 @@
         setupModel.MicrophoneDeviceId = deviceId;
     }
 
-    private void OnAgendaItemsChanged(List<AgendaItem> items)
-    {
-        setupModel.AgendaItems = items;
-    }
-
-    private void OnAttachmentsChanged(List<AttachmentRef> attachments)
-    {
-        setupModel.Attachments = attachments;
-    }
-
     public class PreMeetingSetupModel
     {
-        public string Title { get; set; } = "";
-        public string? Description { get; set; }
+        public string? Context { get; set; }
         public string? MicrophoneDeviceId { get; set; }
-        public List<AgendaItem> AgendaItems { get; set; } = new();
-        public List<AttachmentRef> Attachments { get; set; } = new();
-        public string Language { get; set; } = "en-US";
     }
 }

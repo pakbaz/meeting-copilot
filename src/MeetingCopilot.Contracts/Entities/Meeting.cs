@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MeetingCopilot.Contracts.Entities;
 
 public record Meeting
@@ -21,13 +23,16 @@ public record Meeting
     // Pre-meeting context
     public List<AgendaItem> AgendaItems { get; init; } = new();
     public List<AttachmentRef> Attachments { get; init; } = new();
+    public List<Participant> Participants { get; init; } = new();
     public string? InitialContext { get; init; }
+    public string? Context { get; init; }
     
     // Configuration
     public string? MicrophoneDeviceId { get; init; }
     public string Language { get; init; } = "en-US";
     
-    // TTL for 90-day retention
+    // TTL for 90-day retention (omit from JSON when null to avoid Cosmos DB BadRequest)
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Ttl { get; init; } // Set to 7776000 (90 days) on archive
 }
 
@@ -64,4 +69,23 @@ public record AttachmentRef
     public string ContentType { get; init; } = default!;
     public string BlobUri { get; init; } = default!;
     public DateTimeOffset UploadedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Represents a meeting participant (attendee) parsed from meeting context.
+/// This is separate from Speaker which is identified during transcription.
+/// </summary>
+public record Participant
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string DisplayName { get; init; } = default!;
+    public ParticipantRole Role { get; init; } = ParticipantRole.Attendee;
+    public string? Email { get; init; }
+}
+
+public enum ParticipantRole
+{
+    Organizer,
+    Presenter,
+    Attendee
 }

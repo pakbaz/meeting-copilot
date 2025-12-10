@@ -15,6 +15,8 @@ using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Azure.Cosmos;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Linq;
+using System.Net.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,40 +48,34 @@ builder.Services.AddAGUI();
 builder.Services.AddSingleton<AgentCatalog>();
 
 // Cosmos DB Configuration
-var cosmosConnectionString = builder.Configuration.GetConnectionString("CosmosDb");
+// When running with Aspire, the connection string is named "cosmosdb" (the resource name from AppHost)
+// When running standalone, it uses "CosmosDb" from appsettings.json
+var cosmosConnectionString = builder.Configuration.GetConnectionString("cosmosdb") 
+    ?? builder.Configuration.GetConnectionString("CosmosDb");
 var cosmosDatabaseName = builder.Configuration["CosmosDb:DatabaseName"] ?? "meetingcopilot";
+var cosmosAccountEndpoint = builder.Configuration["CosmosDb:AccountEndpoint"];
+var cosmosEndpointUri = ResolveCosmosEndpoint(cosmosConnectionString, cosmosAccountEndpoint);
+var isCosmosEmulator = IsCosmosEmulatorEndpoint(cosmosEndpointUri);
 
 if (!string.IsNullOrEmpty(cosmosConnectionString))
 {
     builder.Services.AddSingleton<CosmosClient>(sp =>
     {
-        var options = new CosmosClientOptions
-        {
-            SerializerOptions = new CosmosSerializationOptions
-            {
-                PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
-            }
-        };
+        var options = CreateCosmosClientOptions(isCosmosEmulator);
         return new CosmosClient(cosmosConnectionString, options);
     });
 }
 else
 {
     // Fallback to account endpoint and key for development
-    var accountEndpoint = builder.Configuration["CosmosDb:AccountEndpoint"];
+    var accountEndpoint = cosmosAccountEndpoint;
     var accountKey = builder.Configuration["CosmosDb:AccountKey"];
     
     if (!string.IsNullOrEmpty(accountEndpoint) && !string.IsNullOrEmpty(accountKey))
     {
         builder.Services.AddSingleton<CosmosClient>(sp =>
         {
-            var options = new CosmosClientOptions
-            {
-                SerializerOptions = new CosmosSerializationOptions
-                {
-                    PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
-                }
-            };
+            var options = CreateCosmosClientOptions(isCosmosEmulator);
             return new CosmosClient(accountEndpoint, accountKey, options);
         });
     }
@@ -101,14 +97,19 @@ if (!string.IsNullOrEmpty(openAIEndpoint))
         var azureClient = sp.GetRequiredService<AzureOpenAIClient>();
         return azureClient.GetEmbeddingClient(embeddingModel);
     });
+    
+    // Meeting Context Extractor (LLM-based title/agenda extraction)
+    builder.Services.AddScoped<MeetingContextExtractor>();
 }
 
 // Cosmos DB Services
+// Disable vector indexing for emulator (vNext preview doesn't support it)
+var useVectorIndexing = !isCosmosEmulator && builder.Configuration.GetValue<bool>("CosmosDb:UseVectorIndexing", true);
 builder.Services.AddSingleton<CosmosContainerInitializer>(sp =>
 {
     var cosmosClient = sp.GetRequiredService<CosmosClient>();
     var logger = sp.GetRequiredService<ILogger<CosmosContainerInitializer>>();
-    return new CosmosContainerInitializer(cosmosClient, cosmosDatabaseName, logger);
+    return new CosmosContainerInitializer(cosmosClient, cosmosDatabaseName, logger, useVectorIndexing);
 });
 
 // Embedding and Memory Services
@@ -239,7 +240,17 @@ using (var scope = app.Services.CreateScope())
     if (scope.ServiceProvider.GetService<CosmosClient>() != null)
     {
         var containerInitializer = scope.ServiceProvider.GetRequiredService<CosmosContainerInitializer>();
-        await containerInitializer.InitializeAsync();
+        try
+        {
+            await containerInitializer.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            var startupLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            startupLogger.LogWarning(ex,
+                "Skipping Cosmos DB initialization. Ensure the emulator or configured account is reachable. {Message}",
+                ex.Message);
+        }
     }
 }
 
@@ -330,3 +341,59 @@ app.MapAGUI("/agents/keypoints", agentCatalog.KeypointAgent);
 app.MapAGUI("/agents/speakers", agentCatalog.SpeakerAgent);
 
 app.Run();
+
+CosmosClientOptions CreateCosmosClientOptions(bool isEmulator)
+{
+    var options = new CosmosClientOptions
+    {
+        SerializerOptions = new CosmosSerializationOptions
+        {
+            PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase,
+            IgnoreNullValues = true // Prevent serializing null TTL values which Cosmos DB rejects
+        },
+        ConnectionMode = ConnectionMode.Gateway
+    };
+
+    if (isEmulator)
+    {
+        options.LimitToEndpoint = true;
+        options.HttpClientFactory = () =>
+        {
+            var handler = new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+            };
+            return new HttpClient(handler);
+        };
+    }
+
+    return options;
+}
+
+static Uri? ResolveCosmosEndpoint(string? connectionString, string? accountEndpoint)
+{
+    if (!string.IsNullOrWhiteSpace(accountEndpoint) && Uri.TryCreate(accountEndpoint, UriKind.Absolute, out var explicitUri))
+    {
+        return explicitUri;
+    }
+
+    if (!string.IsNullOrEmpty(connectionString))
+    {
+        var endpointEntry = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(part => part.StartsWith("AccountEndpoint=", StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrEmpty(endpointEntry))
+        {
+            var endpointValue = endpointEntry.Substring("AccountEndpoint=".Length).Trim();
+            if (Uri.TryCreate(endpointValue, UriKind.Absolute, out var uriFromConnectionString))
+            {
+                return uriFromConnectionString;
+            }
+        }
+    }
+
+    return null;
+}
+
+static bool IsCosmosEmulatorEndpoint(Uri? endpoint)
+    => endpoint?.IsLoopback ?? false;
