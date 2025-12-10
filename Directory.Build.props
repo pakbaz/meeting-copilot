@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- Suppress Aspire workload deprecation error by converting to warning then suppressing -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);NETSDK1228</MSBuildWarningsAsMessages>
+    <MSBuildTreatWarningsAsErrors>false</MSBuildTreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);NETSDK1228</NoWarn>
+    <!-- Convert NETSDK1228 error to warning -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NETSDK1228</WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

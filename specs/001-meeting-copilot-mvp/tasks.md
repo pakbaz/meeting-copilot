@@ -19,15 +19,15 @@
 
 **Purpose**: Project restructuring for Aspire orchestration and shared projects
 
-- [ ] T001 Create Aspire AppHost project at `MeetingCopilot.AppHost/MeetingCopilot.AppHost.csproj`
-- [ ] T002 Create ServiceDefaults project at `MeetingCopilot.ServiceDefaults/MeetingCopilot.ServiceDefaults.csproj`
-- [ ] T003 [P] Create Contracts project at `src/MeetingCopilot.Contracts/MeetingCopilot.Contracts.csproj`
-- [ ] T004 [P] Create Memory project at `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
-- [ ] T005 [P] Create Agents project at `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
-- [ ] T006 Update solution file `meeting-copilot.sln` to include all new projects
-- [ ] T007 Configure Aspire service topology in `MeetingCopilot.AppHost/Program.cs`
-- [ ] T008 [P] Add Microsoft.Agents.AI preview packages to `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
-- [ ] T009 [P] Add Microsoft.Azure.Cosmos package to `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
+- [X] T001 Create Aspire AppHost project at `MeetingCopilot.AppHost/MeetingCopilot.AppHost.csproj`
+- [X] T002 Create ServiceDefaults project at `MeetingCopilot.ServiceDefaults/MeetingCopilot.ServiceDefaults.csproj`
+- [X] T003 [P] Create Contracts project at `src/MeetingCopilot.Contracts/MeetingCopilot.Contracts.csproj`
+- [X] T004 [P] Create Memory project at `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
+- [X] T005 [P] Create Agents project at `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
+- [X] T006 Update solution file `meeting-copilot.sln` to include all new projects
+- [X] T007 Configure Aspire service topology in `MeetingCopilot.AppHost/Program.cs`
+- [X] T008 [P] Add Microsoft.Agents.AI preview packages to `src/MeetingCopilot.Agents/MeetingCopilot.Agents.csproj`
+- [X] T009 [P] Add Microsoft.Azure.Cosmos package to `src/MeetingCopilot.Memory/MeetingCopilot.Memory.csproj`
 
 ---
 
@@ -39,55 +39,55 @@
 
 ### Cosmos DB Setup
 
-- [ ] T010 Create C# record definitions for all entities in `src/MeetingCopilot.Contracts/Entities/`
-- [ ] T011 [P] Create `Meeting.cs` record in `src/MeetingCopilot.Contracts/Entities/Meeting.cs`
-- [ ] T012 [P] Create `Speaker.cs` record in `src/MeetingCopilot.Contracts/Entities/Speaker.cs`
-- [ ] T013 [P] Create `Interaction.cs` record in `src/MeetingCopilot.Contracts/Entities/Interaction.cs`
-- [ ] T014 [P] Create `Insight.cs` record in `src/MeetingCopilot.Contracts/Entities/Insight.cs`
-- [ ] T015 [P] Create `SessionSummary.cs` record in `src/MeetingCopilot.Contracts/Entities/SessionSummary.cs`
-- [ ] T016 Implement `CosmosDbService.cs` base class in `src/MeetingCopilot.Memory/CosmosDbService.cs`
-- [ ] T017 Implement container initialization with vector policies in `src/MeetingCopilot.Memory/CosmosContainerInitializer.cs`
+- [X] T010 Create C# record definitions for all entities in `src/MeetingCopilot.Contracts/Entities/`
+- [X] T011 [P] Create `Meeting.cs` record in `src/MeetingCopilot.Contracts/Entities/Meeting.cs`
+- [X] T012 [P] Create `Speaker.cs` record in `src/MeetingCopilot.Contracts/Entities/Speaker.cs`
+- [X] T013 [P] Create `Interaction.cs` record in `src/MeetingCopilot.Contracts/Entities/Interaction.cs`
+- [X] T014 [P] Create `Insight.cs` record in `src/MeetingCopilot.Contracts/Entities/Insight.cs`
+- [X] T015 [P] Create `SessionSummary.cs` record in `src/MeetingCopilot.Contracts/Entities/SessionSummary.cs`
+- [X] T016 Implement `CosmosDbService.cs` base class in `src/MeetingCopilot.Memory/CosmosDbService.cs`
+- [X] T017 Implement container initialization with vector policies in `src/MeetingCopilot.Memory/CosmosContainerInitializer.cs`
 
 ### Memory Provider (james-tn/agent-memory pattern)
 
-- [ ] T018 Implement `IMemoryProvider` interface in `src/MeetingCopilot.Contracts/Interfaces/IMemoryProvider.cs`
-- [ ] T019 Implement `CosmosMemoryProvider.cs` in `src/MeetingCopilot.Memory/CosmosMemoryProvider.cs`
-- [ ] T020 Implement `VectorSearchService.cs` in `src/MeetingCopilot.Memory/VectorSearchService.cs`
-- [ ] T021 Implement `EmbeddingService.cs` for OpenAI embeddings in `src/MeetingCopilot.Memory/EmbeddingService.cs`
+- [X] T018 Implement `IMemoryProvider` interface in `src/MeetingCopilot.Contracts/Interfaces/IMemoryProvider.cs`
+- [X] T019 Implement `CosmosMemoryProvider.cs` in `src/MeetingCopilot.Memory/CosmosMemoryProvider.cs`
+- [X] T020 Implement `VectorSearchService.cs` in `src/MeetingCopilot.Memory/VectorSearchService.cs`
+- [X] T021 Implement `EmbeddingService.cs` for OpenAI embeddings in `src/MeetingCopilot.Memory/EmbeddingService.cs`
 
 ### SignalR Hubs
 
-- [ ] T022 Create `MeetingHub.cs` SignalR hub in `Hubs/MeetingHub.cs`
-- [ ] T023 [P] Create SignalR event DTOs in `src/MeetingCopilot.Contracts/Events/`
-- [ ] T024 [P] Create `TranscriptionEvent.cs` in `src/MeetingCopilot.Contracts/Events/TranscriptionEvent.cs`
-- [ ] T025 [P] Create `AnswerEvent.cs` in `src/MeetingCopilot.Contracts/Events/AnswerEvent.cs`
-- [ ] T026 [P] Create `KeyPointsEvent.cs` in `src/MeetingCopilot.Contracts/Events/KeyPointsEvent.cs`
-- [ ] T027 [P] Create `ResearchEvent.cs` in `src/MeetingCopilot.Contracts/Events/ResearchEvent.cs`
-- [ ] T028 Register SignalR hub in `Program.cs` with `/hubs/meeting` endpoint
+- [X] T022 Create `MeetingHub.cs` SignalR hub in `Hubs/MeetingHub.cs`
+- [X] T023 [P] Create SignalR event DTOs in `src/MeetingCopilot.Contracts/Events/`
+- [X] T024 [P] Create `TranscriptionEvent.cs` in `src/MeetingCopilot.Contracts/Events/TranscriptionEvent.cs`
+- [X] T025 [P] Create `AnswerEvent.cs` in `src/MeetingCopilot.Contracts/Events/AnswerEvent.cs`
+- [X] T026 [P] Create `KeyPointsEvent.cs` in `src/MeetingCopilot.Contracts/Events/KeyPointsEvent.cs`
+- [X] T027 [P] Create `ResearchEvent.cs` in `src/MeetingCopilot.Contracts/Events/ResearchEvent.cs`
+- [X] T028 Register SignalR hub in `Program.cs` with `/hubs/meeting` endpoint
 
 ### Agent Infrastructure
 
-- [ ] T029 Create `IAgent` interface in `src/MeetingCopilot.Contracts/Interfaces/IAgent.cs`
-- [ ] T030 Create `AgentMessage` base record in `src/MeetingCopilot.Contracts/Messages/AgentMessage.cs`
-- [ ] T031 Implement `AgentOrchestrator.cs` with priority queue in `src/MeetingCopilot.Agents/AgentOrchestrator.cs`
-- [ ] T032 Implement `AgentPriorityQueue.cs` in `src/MeetingCopilot.Agents/AgentPriorityQueue.cs`
+- [X] T029 Create `IAgent` interface in `src/MeetingCopilot.Contracts/Interfaces/IAgent.cs`
+- [X] T030 Create `AgentMessage` base record in `src/MeetingCopilot.Contracts/Messages/AgentMessage.cs`
+- [X] T031 Implement `AgentOrchestrator.cs` with priority queue in `src/MeetingCopilot.Agents/AgentOrchestrator.cs`
+- [X] T032 Implement `AgentPriorityQueue.cs` in `src/MeetingCopilot.Agents/AgentPriorityQueue.cs`
 
 ### Repository Migration
 
-- [ ] T033 Create `IMeetingRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/IMeetingRepository.cs`
-- [ ] T034 Implement `CosmosMeetingRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosMeetingRepository.cs`
-- [ ] T035 [P] Create `ISpeakerRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/ISpeakerRepository.cs`
-- [ ] T036 [P] Implement `CosmosSpeakerRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosSpeakerRepository.cs`
-- [ ] T037 [P] Create `IInteractionRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/IInteractionRepository.cs`
-- [ ] T038 [P] Implement `CosmosInteractionRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosInteractionRepository.cs`
-- [ ] T039 [P] Create `IInsightRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/IInsightRepository.cs`
-- [ ] T040 [P] Implement `CosmosInsightRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosInsightRepository.cs`
+- [X] T033 Create `IMeetingRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/IMeetingRepository.cs`
+- [X] T034 Implement `CosmosMeetingRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosMeetingRepository.cs`
+- [X] T035 [P] Create `ISpeakerRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/ISpeakerRepository.cs`
+- [X] T036 [P] Implement `CosmosSpeakerRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosSpeakerRepository.cs`
+- [X] T037 [P] Create `IInteractionRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/IInteractionRepository.cs`
+- [X] T038 [P] Implement `CosmosInteractionRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosInteractionRepository.cs`
+- [X] T039 [P] Create `IInsightRepository` interface in `src/MeetingCopilot.Contracts/Interfaces/IInsightRepository.cs`
+- [X] T040 [P] Implement `CosmosInsightRepository.cs` in `src/MeetingCopilot.Memory/Repositories/CosmosInsightRepository.cs`
 
 ### DI Registration
 
-- [ ] T041 Register all services in `Program.cs` with scoped lifetime for Cosmos repositories
-- [ ] T042 Configure `appsettings.json` with Cosmos DB connection settings
-- [ ] T043 Verify Aspire orchestration starts all services with `dotnet run` in AppHost
+- [X] T041 Register all services in `Program.cs` with scoped lifetime for Cosmos repositories
+- [X] T042 Configure `appsettings.json` with Cosmos DB connection settings
+- [X] T043 Verify Aspire orchestration starts all services with `dotnet run` in AppHost
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -101,15 +101,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T044 [US1] Create `PreMeetingSetup.razor` component in `Components/Pages/PreMeetingSetup.razor`
-- [ ] T045 [US1] Implement microphone device enumeration in `Services/MicrophoneService.cs`
-- [ ] T046 [P] [US1] Create `MicrophoneSelector.razor` component in `Components/Shared/MicrophoneSelector.razor`
-- [ ] T047 [P] [US1] Create `AgendaEditor.razor` component in `Components/Shared/AgendaEditor.razor`
-- [ ] T048 [P] [US1] Create `AttachmentUploader.razor` component in `Components/Shared/AttachmentUploader.razor`
-- [ ] T049 [US1] Implement `MeetingService.cs` for meeting CRUD in `Services/MeetingService.cs`
-- [ ] T050 [US1] Add meeting creation endpoint `POST /api/meetings` in `Controllers/MeetingsController.cs`
-- [ ] T051 [US1] Implement "Start Meeting" button navigation to in-meeting view
-- [ ] T052 [US1] Store meeting to Cosmos DB via `CosmosMeetingRepository` on Start Meeting
+- [X] T044 [US1] Create `PreMeetingSetup.razor` component in `Components/Pages/PreMeetingSetup.razor`
+- [X] T045 [US1] Implement microphone device enumeration in `Services/MicrophoneService.cs`
+- [X] T046 [P] [US1] Create `MicrophoneSelector.razor` component in `Components/Shared/MicrophoneSelector.razor`
+- [X] T047 [P] [US1] Create `AgendaEditor.razor` component in `Components/Shared/AgendaEditor.razor`
+- [X] T048 [P] [US1] Create `AttachmentUploader.razor` component in `Components/Shared/AttachmentUploader.razor`
+- [X] T049 [US1] Implement `MeetingService.cs` for meeting CRUD in `Services/MeetingService.cs`
+- [X] T050 [US1] Add meeting creation endpoint `POST /api/meetings` in `Controllers/MeetingsController.cs`
+- [X] T051 [US1] Implement "Start Meeting" button navigation to in-meeting view
+- [X] T052 [US1] Store meeting to Cosmos DB via `CosmosMeetingRepository` on Start Meeting
 
 **Checkpoint**: User Story 1 complete - pre-meeting setup functional
 
@@ -123,17 +123,17 @@
 
 ### Implementation for User Story 2
 
-- [ ] T053 [US2] Implement `TranscriptAgent.cs` in `src/MeetingCopilot.Agents/TranscriptAgent/TranscriptAgent.cs`
-- [ ] T054 [US2] Enhance `SpeechRecognitionService.cs` with speaker diarization in `Services/SpeechRecognitionService.cs`
-- [ ] T055 [US2] Implement `UtteranceProcessed` event emission in TranscriptAgent
-- [ ] T056 [US2] Create `TranscriptPanel.razor` component in `Components/Meeting/TranscriptPanel.razor`
-- [ ] T057 [P] [US2] Create `SpeakerLabel.razor` component in `Components/Shared/SpeakerLabel.razor`
-- [ ] T058 [US2] Implement speaker name inference from transcript in `Services/SpeakerInferenceService.cs`
-- [ ] T059 [US2] Add `/speaker {name}` command handler in `Services/SlashCommandService.cs`
-- [ ] T060 [US2] Implement microphone level warning UI in `Components/Shared/MicrophoneLevelIndicator.razor`
-- [ ] T061 [US2] Implement local audio buffering for connection recovery in `Services/AudioBufferService.cs`
-- [ ] T062 [US2] Add `ConnectionStatusChanged` SignalR event for degraded mode indication
-- [ ] T063 [US2] Store utterances to Cosmos `interactions` container via repository
+- [X] T053 [US2] Implement `TranscriptAgent.cs` in `src/MeetingCopilot.Agents/TranscriptAgent/TranscriptAgent.cs`
+- [X] T054 [US2] Enhance `SpeechRecognitionService.cs` with speaker diarization in `Services/SpeechRecognitionService.cs`
+- [X] T055 [US2] Implement `UtteranceProcessed` event emission in TranscriptAgent
+- [X] T056 [US2] Create `TranscriptPanel.razor` component in `Components/Meeting/TranscriptPanel.razor`
+- [X] T057 [P] [US2] Create `SpeakerLabel.razor` component in `Components/Shared/SpeakerLabel.razor`
+- [X] T058 [US2] Implement speaker name inference from transcript in `Services/SpeakerInferenceService.cs`
+- [X] T059 [US2] Add `/speaker {name}` command handler in `Services/SlashCommandService.cs`
+- [X] T060 [US2] Implement microphone level warning UI in `Components/Shared/MicrophoneLevelIndicator.razor`
+- [X] T061 [US2] Implement local audio buffering for connection recovery in `Services/AudioBufferService.cs`
+- [X] T062 [US2] Add `ConnectionStatusChanged` SignalR event for degraded mode indication
+- [X] T063 [US2] Store utterances to Cosmos `interactions` container via repository
 
 **Checkpoint**: User Story 2 complete - real-time transcription with diarization working
 
@@ -147,15 +147,15 @@
 
 ### Implementation for User Story 3
 
-- [ ] T064 [US3] Implement `AnswerAgent.cs` in `src/MeetingCopilot.Agents/AnswerAgent/AnswerAgent.cs`
-- [ ] T065 [US3] Implement question detection logic in `Services/QuestionDetectionService.cs`
-- [ ] T066 [US3] Create `QuestionDetected` message type in `src/MeetingCopilot.Contracts/Messages/QuestionDetected.cs`
-- [ ] T067 [US3] Implement RAG retrieval for answer context in AnswerAgent
-- [ ] T068 [US3] Create `AnswerPanel.razor` component in `Components/Meeting/AnswerPanel.razor`
-- [ ] T069 [P] [US3] Create `DetailedAnswerView.razor` component in `Components/Meeting/DetailedAnswerView.razor`
-- [ ] T070 [US3] Implement speaker priority ranking for question prioritization
-- [ ] T071 [US3] Add `AnswerReady` SignalR event broadcast from AnswerAgent
-- [ ] T072 [US3] Store Q&A interactions to Cosmos `interactions` container
+- [X] T064 [US3] Implement `AnswerAgent.cs` in `src/MeetingCopilot.Agents/AnswerAgent/AnswerAgent.cs`
+- [X] T065 [US3] Implement question detection logic in `Services/QuestionDetectionService.cs`
+- [X] T066 [US3] Create `QuestionDetected` message type in `src/MeetingCopilot.Contracts/Messages/QuestionDetected.cs`
+- [X] T067 [US3] Implement RAG retrieval for answer context in AnswerAgent
+- [X] T068 [US3] Create `AnswerPanel.razor` component in `Components/Meeting/AnswerPanel.razor`
+- [X] T069 [P] [US3] Create `DetailedAnswerView.razor` component in `Components/Meeting/DetailedAnswerView.razor`
+- [X] T070 [US3] Implement speaker priority ranking for question prioritization
+- [X] T071 [US3] Add `AnswerReady` SignalR event broadcast from AnswerAgent
+- [X] T072 [US3] Store Q&A interactions to Cosmos `interactions` container
 
 **Checkpoint**: User Story 3 complete - question answering functional
 
@@ -169,13 +169,13 @@
 
 ### Implementation for User Story 4
 
-- [ ] T073 [US4] Implement key point extraction in `SummaryAgent.cs` (partial) in `src/MeetingCopilot.Agents/SummaryAgent/SummaryAgent.cs`
-- [ ] T074 [US4] Create `KeyPointExtracted` message type in `src/MeetingCopilot.Contracts/Messages/KeyPointExtracted.cs`
-- [ ] T075 [US4] Create `KeyPointsPanel.razor` component in `Components/Meeting/KeyPointsPanel.razor`
-- [ ] T076 [US4] Implement key point priority scoring algorithm in SummaryAgent
-- [ ] T077 [US4] Add "Follow Up" button to add key point to parking lot
-- [ ] T078 [US4] Add `KeyPointsUpdated` SignalR event broadcast
-- [ ] T079 [US4] Store key points to Cosmos `insights` container with type `key_point`
+- [X] T073 [US4] Implement key point extraction in `SummaryAgent.cs` (partial) in `src/MeetingCopilot.Agents/SummaryAgent/SummaryAgent.cs`
+- [X] T074 [US4] Create `KeyPointExtracted` message type in `src/MeetingCopilot.Contracts/Messages/KeyPointExtracted.cs`
+- [X] T075 [US4] Create `KeyPointsPanel.razor` component in `Components/Meeting/KeyPointsPanel.razor`
+- [X] T076 [US4] Implement key point priority scoring algorithm in SummaryAgent
+- [X] T077 [US4] Add "Follow Up" button to add key point to parking lot
+- [X] T078 [US4] Add `KeyPointsUpdated` SignalR event broadcast
+- [X] T079 [US4] Store key points to Cosmos `insights` container with type `key_point`
 
 **Checkpoint**: User Story 4 complete - key points tracking functional
 
@@ -189,15 +189,15 @@
 
 ### Implementation for User Story 5
 
-- [ ] T080 [US5] Implement `ResearchAgent.cs` in `src/MeetingCopilot.Agents/ResearchAgent/ResearchAgent.cs`
-- [ ] T081 [US5] Integrate web search capability via Microsoft Foundry in ResearchAgent
-- [ ] T082 [US5] Create `ResearchRequested` message type in `src/MeetingCopilot.Contracts/Messages/ResearchRequested.cs`
-- [ ] T083 [US5] Create `ResearchPanel.razor` component in `Components/Meeting/ResearchPanel.razor`
-- [ ] T084 [P] [US5] Create `ResearchDetailView.razor` component in `Components/Meeting/ResearchDetailView.razor`
-- [ ] T085 [US5] Add `/research {topic}` command handler in `Services/SlashCommandService.cs`
-- [ ] T086 [US5] Implement automatic topic detection for background research
-- [ ] T087 [US5] Add `ResearchReady` SignalR event broadcast
-- [ ] T088 [US5] Store research results to Cosmos `insights` container with type `research_result`
+- [X] T080 [US5] Implement `ResearchAgent.cs` in `src/MeetingCopilot.Agents/ResearchAgent/ResearchAgent.cs`
+- [X] T081 [US5] Integrate web search capability via Microsoft Foundry in ResearchAgent
+- [X] T082 [US5] Create `ResearchRequested` message type in `src/MeetingCopilot.Contracts/Messages/ResearchRequested.cs`
+- [X] T083 [US5] Create `ResearchPanel.razor` component in `Components/Meeting/ResearchPanel.razor`
+- [X] T084 [P] [US5] Create `ResearchDetailView.razor` component in `Components/Meeting/ResearchDetailView.razor`
+- [X] T085 [US5] Add `/research {topic}` command handler in `Services/SlashCommandService.cs`
+- [X] T086 [US5] Implement automatic topic detection for background research
+- [X] T087 [US5] Add `ResearchReady` SignalR event broadcast
+- [X] T088 [US5] Store research results to Cosmos `insights` container with type `research_result`
 
 **Checkpoint**: User Story 5 complete - research agent functional
 
